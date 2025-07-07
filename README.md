@@ -1,4 +1,4 @@
-# 🚀 Enterprise DevOps Pipeline - Complete Implementation
+# 🚀 DevOps Pipeline - Complete Implementation
 
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?style=for-the-badge&logo=kubernetes&logoColor=white)](https://kubernetes.io/)
 [![OpenShift](https://img.shields.io/badge/OpenShift-EE0000?style=for-the-badge&logo=red-hat-open-shift&logoColor=white)](https://www.openshift.com/)

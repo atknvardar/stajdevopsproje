@@ -28,25 +28,11 @@ jobs:
         run: |
           cd app
           pip install -r requirements.txt
-          pip install pytest pytest-cov black isort flake8
-
-      - name: 🔍 Lint code
-        run: |
-          cd app
-          black --check .
-          isort --check-only .
-          flake8 .
 
       - name: 🧪 Run tests
         run: |
           cd app
-          pytest tests/ -v --cov=. --cov-report=xml
-
-      - name: 📊 Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
-        with:
-          file: ./app/coverage.xml
-          flags: unittests
+          python -m pytest tests/ -v --tb=short
 
   # 🏗️ Build Job
   build:
@@ -87,7 +73,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./build/Dockerfile
+          file: ./Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

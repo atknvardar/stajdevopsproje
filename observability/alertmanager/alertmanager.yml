@@ -1,0 +1,261 @@
+global:
+  # Global SMTP configuration
+  smtp_smarthost: 'smtp.company.com:587'
+  smtp_from: 'alerts@company.com'
+  smtp_auth_username: 'alerts@company.com'
+  smtp_auth_password: 'your-smtp-password'
+  smtp_require_tls: true
+
+  # Global Slack configuration
+  slack_api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+
+# Email templates
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# Alert routing configuration
+route:
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 1h
+  receiver: 'web.hook'
+  
+  routes:
+    # Critical alerts - immediate notification
+    - match:
+        severity: critical
+      receiver: 'critical-alerts'
+      group_wait: 5s
+      group_interval: 5s
+      repeat_interval: 15m
+      routes:
+        # Critical infrastructure alerts
+        - match:
+            component: infrastructure
+          receiver: 'infrastructure-critical'
+        # Critical application alerts
+        - match:
+            component: availability
+          receiver: 'application-critical'
+        # Critical performance alerts
+        - match:
+            component: performance
+          receiver: 'performance-critical'
+
+    # Warning alerts - regular notification
+    - match:
+        severity: warning
+      receiver: 'warning-alerts'
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 2h
+      routes:
+        # Resource warnings
+        - match:
+            component: resources
+          receiver: 'resource-warnings'
+        # Performance warnings
+        - match:
+            component: performance
+          receiver: 'performance-warnings'
+
+    # Development environment - reduced noise
+    - match:
+        namespace: microservice-demo-dev
+      receiver: 'dev-alerts'
+      group_interval: 10m
+      repeat_interval: 6h
+
+    # Staging environment - moderate alerting
+    - match:
+        namespace: microservice-demo-staging
+      receiver: 'staging-alerts'
+      group_interval: 5m
+      repeat_interval: 2h
+
+    # Production environment - immediate alerting
+    - match:
+        namespace: microservice-demo-prod
+      receiver: 'production-alerts'
+      group_wait: 5s
+      group_interval: 30s
+      repeat_interval: 30m
+
+# Alert receivers and notification methods
+receivers:
+  # Default webhook receiver
+  - name: 'web.hook'
+    webhook_configs:
+      - url: 'http://webhook-receiver:8080/alerts'
+        send_resolved: true
+
+  # Critical alerts - multiple channels
+  - name: 'critical-alerts'
+    email_configs:
+      - to: 'oncall@company.com'
+        subject: '🚨 CRITICAL: {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+        body: |
+          {{ range .Alerts }}
+          **Alert:** {{ .Annotations.summary }}
+          **Description:** {{ .Annotations.description }}
+          **Severity:** {{ .Labels.severity }}
+          **Component:** {{ .Labels.component }}
+          **Instance:** {{ .Labels.instance }}
+          **Time:** {{ .StartsAt.Format "2006-01-02 15:04:05" }}
+          {{ if .Annotations.runbook_url }}**Runbook:** {{ .Annotations.runbook_url }}{{ end }}
+          {{ end }}
+        html: |
+          <h2>🚨 Critical Alert</h2>
+          {{ range .Alerts }}
+          <div style="border: 2px solid red; padding: 10px; margin: 10px;">
+            <h3>{{ .Annotations.summary }}</h3>
+            <p><strong>Description:</strong> {{ .Annotations.description }}</p>
+            <p><strong>Severity:</strong> {{ .Labels.severity }}</p>
+            <p><strong>Component:</strong> {{ .Labels.component }}</p>
+            <p><strong>Instance:</strong> {{ .Labels.instance }}</p>
+            <p><strong>Time:</strong> {{ .StartsAt.Format "2006-01-02 15:04:05" }}</p>
+            {{ if .Annotations.runbook_url }}<p><a href="{{ .Annotations.runbook_url }}">📖 Runbook</a></p>{{ end }}
+          </div>
+          {{ end }}
+    slack_configs:
+      - channel: '#alerts-critical'
+        title: '🚨 Critical Alert'
+        text: |
+          {{ range .Alerts }}
+          *{{ .Annotations.summary }}*
+          {{ .Annotations.description }}
+          
+          *Severity:* {{ .Labels.severity }}
+          *Component:* {{ .Labels.component }}
+          *Instance:* {{ .Labels.instance }}
+          {{ if .Annotations.runbook_url }}*Runbook:* {{ .Annotations.runbook_url }}{{ end }}
+          {{ end }}
+        color: 'danger'
+        send_resolved: true
+
+  # Infrastructure critical alerts
+  - name: 'infrastructure-critical'
+    email_configs:
+      - to: 'infrastructure@company.com'
+        subject: '🏗️ INFRASTRUCTURE CRITICAL: {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+    slack_configs:
+      - channel: '#infrastructure-alerts'
+        title: '🏗️ Infrastructure Critical'
+        color: 'danger'
+
+  # Application critical alerts
+  - name: 'application-critical'
+    email_configs:
+      - to: 'devops@company.com, developers@company.com'
+        subject: '💥 APPLICATION CRITICAL: {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+    slack_configs:
+      - channel: '#app-alerts'
+        title: '💥 Application Critical'
+        color: 'danger'
+
+  # Performance critical alerts
+  - name: 'performance-critical'
+    email_configs:
+      - to: 'performance@company.com'
+        subject: '⚡ PERFORMANCE CRITICAL: {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+    slack_configs:
+      - channel: '#performance-alerts'
+        title: '⚡ Performance Critical'
+        color: 'danger'
+
+  # Warning alerts
+  - name: 'warning-alerts'
+    slack_configs:
+      - channel: '#alerts-warning'
+        title: '⚠️ Warning Alert'
+        text: |
+          {{ range .Alerts }}
+          *{{ .Annotations.summary }}*
+          {{ .Annotations.description }}
+          
+          *Severity:* {{ .Labels.severity }}
+          *Component:* {{ .Labels.component }}
+          {{ end }}
+        color: 'warning'
+        send_resolved: true
+
+  # Resource warnings
+  - name: 'resource-warnings'
+    slack_configs:
+      - channel: '#resource-alerts'
+        title: '📊 Resource Warning'
+        color: 'warning'
+
+  # Performance warnings
+  - name: 'performance-warnings'
+    slack_configs:
+      - channel: '#performance-alerts'
+        title: '⏱️ Performance Warning'
+        color: 'warning'
+
+  # Environment-specific receivers
+  - name: 'dev-alerts'
+    slack_configs:
+      - channel: '#dev-alerts'
+        title: '🔧 Development Alert'
+        color: 'good'
+
+  - name: 'staging-alerts'
+    slack_configs:
+      - channel: '#staging-alerts'
+        title: '🧪 Staging Alert'
+        color: 'warning'
+
+  - name: 'production-alerts'
+    email_configs:
+      - to: 'production-oncall@company.com'
+        subject: '🔥 PRODUCTION: {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+    slack_configs:
+      - channel: '#production-alerts'
+        title: '🔥 Production Alert'
+        color: 'danger'
+
+# Inhibition rules - suppress redundant alerts
+inhibit_rules:
+  # If a service is down, don't alert on high error rate
+  - source_match:
+      alertname: 'MicroserviceDown'
+    target_match:
+      alertname: 'HighHTTPErrorRate'
+    equal: ['instance']
+
+  # If all instances are down, don't alert on individual instances
+  - source_match:
+      alertname: 'MicroserviceInstancesDown'
+    target_match:
+      alertname: 'MicroserviceDown'
+    equal: ['namespace']
+
+  # If there's critical memory usage, don't alert on high memory usage
+  - source_match:
+      alertname: 'CriticalMemoryUsage'
+    target_match:
+      alertname: 'HighMemoryUsage'
+    equal: ['pod']
+
+  # If there's a critical error rate, don't alert on high error rate
+  - source_match:
+      alertname: 'CriticalHTTPErrorRate'
+    target_match:
+      alertname: 'HighHTTPErrorRate'
+    equal: ['instance']
+
+  # If there's very high response time, don't alert on high response time
+  - source_match:
+      alertname: 'VeryHighResponseTime'
+    target_match:
+      alertname: 'HighResponseTime'
+    equal: ['instance']
+
+  # If node is not ready, suppress other node alerts
+  - source_match:
+      alertname: 'NodeNotReady'
+    target_match_re:
+      alertname: 'Node.*'
+    equal: ['node'] 

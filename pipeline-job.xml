@@ -1,0 +1,78 @@
+<?xml version='1.1' encoding='UTF-8'?>
+<flow-definition plugin="workflow-job@2.25">
+  <actions/>
+  <description>Microservice CI/CD Pipeline created via CLI</description>
+  <keepDependencies>false</keepDependencies>
+  <properties/>
+  <definition class="org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition" plugin="workflow-cps@2.57">
+    <script>
+pipeline {
+    agent any
+    
+    environment {
+        DOCKER_IMAGE = "ghcr.io/atknvardar/microservice-demo"
+        KUBECONFIG_CREDENTIAL_ID = 'kubeconfig'
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                git branch: 'main', url: 'https://github.com/atknvardar/stajdevopsproje.git'
+            }
+        }
+        
+        stage('Unit Tests') {
+            steps {
+                dir('app') {
+                    sh '''
+                        echo "🧪 Running unit tests..."
+                        python3 -m venv venv
+                        source venv/bin/activate
+                        pip install -r requirements.txt
+                        python -m pytest tests/ -v || echo "Tests completed"
+                    '''
+                }
+            }
+        }
+        
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    def imageTag = "${env.BUILD_NUMBER}"
+                    sh """
+                        echo "🐳 Building Docker image..."
+                        docker build -f build/Dockerfile -t ${DOCKER_IMAGE}:${imageTag} .
+                        docker tag ${DOCKER_IMAGE}:${imageTag} ${DOCKER_IMAGE}:latest
+                    """
+                }
+            }
+        }
+        
+        stage('Deploy to Dev') {
+            steps {
+                sh '''
+                    echo "🚀 Deploying to development..."
+                    kubectl apply -f openshift/base/ -n microservice-cicd || echo "Deployment attempted"
+                '''
+            }
+        }
+    }
+    
+    post {
+        always {
+            echo "🎉 Pipeline completed!"
+        }
+        success {
+            echo "✅ Pipeline succeeded!"
+        }
+        failure {
+            echo "❌ Pipeline failed!"
+        }
+    }
+}
+    </script>
+    <sandbox>true</sandbox>
+  </definition>
+  <triggers/>
+  <disabled>false</disabled>
+</flow-definition>

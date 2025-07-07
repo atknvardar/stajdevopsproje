@@ -1,0 +1,413 @@
+---
+# Namespace labels for Pod Security Standards
+# These labels should be applied to namespaces to enforce pod security
+
+# Development namespace - Privileged (for development flexibility)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: microservice-demo-dev
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+    environment: development
+    monitoring: enabled
+
+---
+# Staging namespace - Baseline security
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: microservice-demo-staging
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+    environment: staging
+    monitoring: enabled
+
+---
+# Production namespace - Restricted security
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: microservice-demo-prod
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+    environment: production
+    monitoring: enabled
+
+---
+# OpenShift Security Context Constraint - Restricted
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: microservice-restricted
+  labels:
+    app.kubernetes.io/name: security
+    app.kubernetes.io/component: scc
+  annotations:
+    kubernetes.io/description: >-
+      Restricted SCC for microservice workloads. Provides the most
+      restrictive security context while still allowing pods to run.
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegeEscalation: false
+allowPrivilegedContainer: false
+allowedCapabilities: null
+defaultAddCapabilities: null
+fsGroup:
+  type: MustRunAs
+  ranges:
+    - min: 1000
+      max: 65535
+readOnlyRootFilesystem: true
+requiredDropCapabilities:
+  - ALL
+runAsUser:
+  type: MustRunAsNonRoot
+seLinuxContext:
+  type: MustRunAs
+seccompProfiles:
+  - runtime/default
+supplementalGroups:
+  type: MustRunAs
+  ranges:
+    - min: 1000
+      max: 65535
+users: []
+groups:
+  - system:serviceaccounts:microservice-demo-prod
+volumes:
+  - configMap
+  - downwardAPI
+  - emptyDir
+  - persistentVolumeClaim
+  - projected
+  - secret
+
+---
+# OpenShift Security Context Constraint - Baseline for staging
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: microservice-baseline
+  labels:
+    app.kubernetes.io/name: security
+    app.kubernetes.io/component: scc
+  annotations:
+    kubernetes.io/description: >-
+      Baseline SCC for microservice staging workloads. Provides
+      moderate security restrictions.
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegeEscalation: false
+allowPrivilegedContainer: false
+allowedCapabilities:
+  - NET_BIND_SERVICE
+defaultAddCapabilities: null
+fsGroup:
+  type: RunAsAny
+readOnlyRootFilesystem: false
+requiredDropCapabilities:
+  - ALL
+runAsUser:
+  type: MustRunAsNonRoot
+seLinuxContext:
+  type: MustRunAs
+seccompProfiles:
+  - runtime/default
+supplementalGroups:
+  type: RunAsAny
+users: []
+groups:
+  - system:serviceaccounts:microservice-demo-staging
+volumes:
+  - configMap
+  - downwardAPI
+  - emptyDir
+  - persistentVolumeClaim
+  - projected
+  - secret
+  - hostPath
+
+---
+# OpenShift Security Context Constraint - Development (more permissive)
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: microservice-dev
+  labels:
+    app.kubernetes.io/name: security
+    app.kubernetes.io/component: scc
+  annotations:
+    kubernetes.io/description: >-
+      Development SCC for microservice dev workloads. Provides
+      relaxed security for development productivity.
+allowHostDirVolumePlugin: true
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegeEscalation: true
+allowPrivilegedContainer: false
+allowedCapabilities:
+  - NET_BIND_SERVICE
+  - SYS_PTRACE
+defaultAddCapabilities: null
+fsGroup:
+  type: RunAsAny
+readOnlyRootFilesystem: false
+requiredDropCapabilities:
+  - KILL
+  - MKNOD
+  - SETGID
+  - SETUID
+runAsUser:
+  type: RunAsAny
+seLinuxContext:
+  type: RunAsAny
+seccompProfiles:
+  - runtime/default
+  - unconfined
+supplementalGroups:
+  type: RunAsAny
+users: []
+groups:
+  - system:serviceaccounts:microservice-demo-dev
+volumes:
+  - '*'
+
+---
+# Pod Security Policy (for Kubernetes clusters without PSS)
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: microservice-restricted-psp
+  labels:
+    app.kubernetes.io/name: security
+    app.kubernetes.io/component: psp
+  annotations:
+    kubernetes.io/description: >-
+      Restricted Pod Security Policy for microservice workloads.
+spec:
+  privileged: false
+  allowPrivilegeEscalation: false
+  requiredDropCapabilities:
+    - ALL
+  volumes:
+    - 'configMap'
+    - 'emptyDir'
+    - 'projected'
+    - 'secret'
+    - 'downwardAPI'
+    - 'persistentVolumeClaim'
+  hostNetwork: false
+  hostIPC: false
+  hostPID: false
+  runAsUser:
+    rule: 'MustRunAsNonRoot'
+  seLinux:
+    rule: 'RunAsAny'
+  fsGroup:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1000
+        max: 65535
+  readOnlyRootFilesystem: true
+  seccompProfile:
+    type: 'RuntimeDefault'
+
+---
+# Cluster Role for PSP usage
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: microservice-psp-user
+  labels:
+    app.kubernetes.io/name: security
+    app.kubernetes.io/component: psp-rbac
+rules:
+  - apiGroups:
+      - policy
+    resources:
+      - podsecuritypolicies
+    verbs:
+      - use
+    resourceNames:
+      - microservice-restricted-psp
+
+---
+# Cluster Role Binding for PSP
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: microservice-psp-binding
+  labels:
+    app.kubernetes.io/name: security
+    app.kubernetes.io/component: psp-rbac
+roleRef:
+  kind: ClusterRole
+  name: microservice-psp-user
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+  - kind: Group
+    name: system:serviceaccounts:microservice-demo-prod
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: system:serviceaccounts:microservice-demo-staging
+    apiGroup: rbac.authorization.k8s.io
+
+---
+# Security Context Example for Restricted Workload
+apiVersion: v1
+kind: Pod
+metadata:
+  name: secure-microservice-example
+  namespace: microservice-demo-prod
+  labels:
+    app: microservice-demo
+    security-profile: restricted
+spec:
+  serviceAccountName: microservice-demo-sa
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: microservice
+      image: ghcr.io/user/microservice-demo:latest
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
+      ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+      volumeMounts:
+        - name: tmp-volume
+          mountPath: /tmp
+        - name: cache-volume
+          mountPath: /app/.cache
+      resources:
+        requests:
+          memory: "256Mi"
+          cpu: "200m"
+        limits:
+          memory: "512Mi"
+          cpu: "500m"
+  volumes:
+    - name: tmp-volume
+      emptyDir: {}
+    - name: cache-volume
+      emptyDir: {}
+
+---
+# Admission Controller Configuration (ValidatingAdmissionWebhook)
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionWebhook
+metadata:
+  name: security-validation-webhook
+  labels:
+    app.kubernetes.io/name: security
+    app.kubernetes.io/component: admission-controller
+webhooks:
+  - name: pod-security-validation.company.com
+    clientConfig:
+      service:
+        name: security-validation-service
+        namespace: security-tools
+        path: "/validate-pods"
+    rules:
+      - operations: ["CREATE", "UPDATE"]
+        apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods"]
+    admissionReviewVersions: ["v1", "v1beta1"]
+    sideEffects: None
+    failurePolicy: Fail
+    namespaceSelector:
+      matchLabels:
+        security-validation: enabled
+
+---
+# OPA Gatekeeper Constraint Template (if using Gatekeeper)
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: ConstraintTemplate
+metadata:
+  name: requiresecuritycontext
+  labels:
+    app.kubernetes.io/name: security
+    app.kubernetes.io/component: gatekeeper
+spec:
+  crd:
+    spec:
+      names:
+        kind: RequireSecurityContext
+      validation:
+        type: object
+        properties:
+          message:
+            type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package requiresecuritycontext
+        
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.securityContext.runAsNonRoot
+          msg := "Container must run as non-root user"
+        }
+        
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.securityContext.readOnlyRootFilesystem
+          msg := "Container must have read-only root filesystem"
+        }
+        
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          "ALL" in container.securityContext.capabilities.drop
+          msg := "Container must drop ALL capabilities"
+        }
+
+---
+# Gatekeeper Constraint Instance
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: RequireSecurityContext
+metadata:
+  name: must-have-security-context
+  labels:
+    app.kubernetes.io/name: security
+    app.kubernetes.io/component: gatekeeper
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+    namespaces:
+      - microservice-demo-prod
+      - microservice-demo-staging
+  parameters:
+    message: "All containers must have proper security context configured" 

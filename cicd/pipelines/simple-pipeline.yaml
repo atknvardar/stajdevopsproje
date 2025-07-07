@@ -1,0 +1,89 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: microservice-simple-pipeline
+  labels:
+    app: microservice-demo
+spec:
+  description: |
+    Simplified CI/CD pipeline for the microservice demo application
+  params:
+    - name: git-url
+      type: string
+      description: Git repository URL
+      default: "https://github.com/atknvardar/stajdevopsproje.git"
+    - name: git-revision
+      type: string
+      description: Git revision to checkout
+      default: "main"
+    - name: image-name
+      type: string
+      description: Container image name
+      default: "ghcr.io/atknvardar/microservice-demo"
+
+  workspaces:
+    - name: shared-workspace
+      description: Shared workspace for pipeline data
+
+  tasks:
+    # Stage 1: Unit Tests
+    - name: unit-test
+      taskRef:
+        name: unit-test-task
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+      params:
+        - name: sonarqube-url
+          value: ""
+        - name: git-revision
+          value: $(params.git-revision)
+
+    # Stage 2: Deploy to Development  
+    - name: deploy-dev
+      taskRef:
+        name: deploy-task
+      runAfter:
+        - unit-test
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+      params:
+        - name: image-name
+          value: $(params.image-name)
+        - name: namespace
+          value: "microservice-cicd"
+        - name: environment
+          value: "dev"
+        - name: manifests-path
+          value: "openshift/overlays/dev"
+
+    # Stage 3: E2E Tests
+    - name: e2e-test
+      taskRef:
+        name: e2e-test-task
+      runAfter:
+        - deploy-dev
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+      params:
+        - name: namespace
+          value: "microservice-cicd"
+        - name: app-name
+          value: "microservice-demo"
+
+  finally:
+    # Notification
+    - name: notify-result
+      taskRef:
+        name: notification-task
+      params:
+        - name: pipeline-status
+          value: $(tasks.status)
+        - name: slack-webhook
+          value: ""
+        - name: git-commit
+          value: $(params.git-revision)
+        - name: image-name
+          value: $(params.image-name) 

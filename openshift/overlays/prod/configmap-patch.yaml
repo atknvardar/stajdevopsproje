@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: microservice-demo-config
+data:
+  # Production-specific configuration
+  log-level: "WARN"
+  environment: "production"
+  tracing-enabled: "false"
+  
+  # Production server settings
+  debug-mode: "false"
+  performance-monitoring: "true"
+  security-headers: "true"
+  
+  # Production monitoring
+  metrics-interval: "30"
+  health-check-timeout: "10"
+  
+  # Production security
+  ssl-enabled: "true"
+  cors-enabled: "false"
+  audit-logging: "true" 

@@ -1,0 +1,41 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: microservice-demo-staging
+  annotations:
+    config.kubernetes.io/local-config: "true"
+
+resources:
+  - ../../base
+
+namePrefix: ""
+nameSuffix: "-staging"
+
+commonLabels:
+  environment: staging
+  tier: pre-production
+
+commonAnnotations:
+  environment: staging
+  deployment.strategy: "rolling"
+
+replicas:
+  - name: microservice-demo
+    count: 2
+
+patchesStrategicMerge:
+  - deployment-patch.yaml
+  - configmap-patch.yaml
+
+configMapGenerator:
+  - name: microservice-demo-config
+    behavior: merge
+    literals:
+      - log-level=INFO
+      - environment=staging
+      - tracing-enabled=true
+
+images:
+  - name: ghcr.io/user/microservice-demo
+    newTag: staging 

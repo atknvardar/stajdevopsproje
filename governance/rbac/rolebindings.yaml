@@ -1,0 +1,307 @@
+---
+# Developer role bindings for development namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  namespace: microservice-demo-dev
+  name: developers
+  labels:
+    app.kubernetes.io/name: rbac
+    app.kubernetes.io/component: developer-binding
+subjects:
+  # Individual users
+  - kind: User
+    name: john.developer@company.com
+    apiGroup: rbac.authorization.k8s.io
+  - kind: User
+    name: jane.smith@company.com
+    apiGroup: rbac.authorization.k8s.io
+  
+  # Developer group
+  - kind: Group
+    name: developers
+    apiGroup: rbac.authorization.k8s.io
+  
+  # Service account for local development
+  - kind: ServiceAccount
+    name: dev-service-account
+    namespace: microservice-demo-dev
+roleRef:
+  kind: Role
+  name: developer
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# QA Tester role binding for staging namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  namespace: microservice-demo-staging
+  name: qa-testers
+  labels:
+    app.kubernetes.io/name: rbac
+    app.kubernetes.io/component: qa-binding
+subjects:
+  # QA team members
+  - kind: User
+    name: alice.tester@company.com
+    apiGroup: rbac.authorization.k8s.io
+  - kind: User
+    name: bob.qa@company.com
+    apiGroup: rbac.authorization.k8s.io
+  
+  # QA group
+  - kind: Group
+    name: qa-team
+    apiGroup: rbac.authorization.k8s.io
+  
+  # QA automation service account
+  - kind: ServiceAccount
+    name: qa-automation
+    namespace: microservice-demo-staging
+roleRef:
+  kind: Role
+  name: qa-tester
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# DevOps Engineer cluster role binding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: devops-engineers
+  labels:
+    app.kubernetes.io/name: rbac
+    app.kubernetes.io/component: devops-binding
+subjects:
+  # DevOps team members
+  - kind: User
+    name: admin@company.com
+    apiGroup: rbac.authorization.k8s.io
+  - kind: User
+    name: devops.lead@company.com
+    apiGroup: rbac.authorization.k8s.io
+  - kind: User
+    name: platform.engineer@company.com
+    apiGroup: rbac.authorization.k8s.io
+  
+  # DevOps group
+  - kind: Group
+    name: devops-team
+    apiGroup: rbac.authorization.k8s.io
+  
+  # Infrastructure service accounts
+  - kind: ServiceAccount
+    name: cluster-admin-sa
+    namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: devops-engineer
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Site Reliability Engineer cluster role binding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: sre-team
+  labels:
+    app.kubernetes.io/name: rbac
+    app.kubernetes.io/component: sre-binding
+subjects:
+  # SRE team members
+  - kind: User
+    name: sre.lead@company.com
+    apiGroup: rbac.authorization.k8s.io
+  - kind: User
+    name: on.call@company.com
+    apiGroup: rbac.authorization.k8s.io
+  
+  # SRE group
+  - kind: Group
+    name: sre-team
+    apiGroup: rbac.authorization.k8s.io
+  
+  # Monitoring service accounts
+  - kind: ServiceAccount
+    name: prometheus-operator
+    namespace: observability
+  - kind: ServiceAccount
+    name: grafana
+    namespace: observability
+roleRef:
+  kind: ClusterRole
+  name: sre
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Security Auditor cluster role binding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: security-auditors
+  labels:
+    app.kubernetes.io/name: rbac
+    app.kubernetes.io/component: auditor-binding
+subjects:
+  # Security team members
+  - kind: User
+    name: security.lead@company.com
+    apiGroup: rbac.authorization.k8s.io
+  - kind: User
+    name: compliance.officer@company.com
+    apiGroup: rbac.authorization.k8s.io
+  
+  # Security group
+  - kind: Group
+    name: security-team
+    apiGroup: rbac.authorization.k8s.io
+  
+  # Security scanning service account
+  - kind: ServiceAccount
+    name: security-scanner
+    namespace: security-tools
+roleRef:
+  kind: ClusterRole
+  name: security-auditor
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# CI/CD Service cluster role binding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cicd-services
+  labels:
+    app.kubernetes.io/name: rbac
+    app.kubernetes.io/component: cicd-binding
+subjects:
+  # Tekton pipeline service account
+  - kind: ServiceAccount
+    name: tekton-pipeline-sa
+    namespace: tekton-pipelines
+  
+  # Jenkins service account
+  - kind: ServiceAccount
+    name: jenkins
+    namespace: ci-cd
+  
+  # GitHub Actions runner service account
+  - kind: ServiceAccount
+    name: github-actions-runner
+    namespace: ci-cd
+  
+  # ArgoCD service account
+  - kind: ServiceAccount
+    name: argocd-application-controller
+    namespace: argocd
+roleRef:
+  kind: ClusterRole
+  name: cicd-service
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Read-Only Users cluster role binding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: readonly-users
+  labels:
+    app.kubernetes.io/name: rbac
+    app.kubernetes.io/component: readonly-binding
+subjects:
+  # Business stakeholders
+  - kind: User
+    name: product.manager@company.com
+    apiGroup: rbac.authorization.k8s.io
+  - kind: User
+    name: business.analyst@company.com
+    apiGroup: rbac.authorization.k8s.io
+  
+  # External auditors (temporary access)
+  - kind: User
+    name: external.auditor@consultancy.com
+    apiGroup: rbac.authorization.k8s.io
+  
+  # Read-only group
+  - kind: Group
+    name: stakeholders
+    apiGroup: rbac.authorization.k8s.io
+  
+  # Dashboard service accounts
+  - kind: ServiceAccount
+    name: dashboard-viewer
+    namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: readonly-user
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Microservice Application Service Account Binding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  namespace: microservice-demo-prod
+  name: microservice-app-binding
+  labels:
+    app.kubernetes.io/name: rbac
+    app.kubernetes.io/component: app-binding
+subjects:
+  - kind: ServiceAccount
+    name: microservice-demo-sa
+    namespace: microservice-demo-prod
+roleRef:
+  kind: Role
+  name: microservice-app-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Emergency Access Role Binding (Break-glass)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: emergency-access
+  labels:
+    app.kubernetes.io/name: rbac
+    app.kubernetes.io/component: emergency-binding
+    emergency-access: "true"
+subjects:
+  # Emergency access users (should be limited and audited)
+  - kind: User
+    name: emergency.admin@company.com
+    apiGroup: rbac.authorization.k8s.io
+  
+  # On-call incident response
+  - kind: Group
+    name: incident-response
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Namespace Admin Role Binding (per environment)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  namespace: microservice-demo-prod
+  name: namespace-admins
+  labels:
+    app.kubernetes.io/name: rbac
+    app.kubernetes.io/component: namespace-admin-binding
+subjects:
+  # Production environment administrators
+  - kind: User
+    name: prod.admin@company.com
+    apiGroup: rbac.authorization.k8s.io
+  
+  # Production admin group
+  - kind: Group
+    name: prod-admins
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: admin
+  apiGroup: rbac.authorization.k8s.io 

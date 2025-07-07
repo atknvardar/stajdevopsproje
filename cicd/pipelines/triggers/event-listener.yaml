@@ -1,0 +1,248 @@
+apiVersion: triggers.tekton.dev/v1beta1
+kind: EventListener
+metadata:
+  name: github-webhook-listener
+  labels:
+    app: microservice-demo
+spec:
+  serviceAccountName: pipeline-sa
+  triggers:
+    # Trigger for main branch pushes
+    - name: github-push-main
+      interceptors:
+        - ref:
+            name: "github"
+          params:
+            - name: "secretRef"
+              value:
+                secretName: github-secret
+                secretKey: secretToken
+            - name: "eventTypes"
+              value: ["push"]
+        - ref:
+            name: "cel"
+          params:
+            - name: "filter"
+              value: "body.ref == 'refs/heads/main'"
+      bindings:
+        - ref: github-push-binding
+      template:
+        ref: microservice-main-trigger
+
+    # Trigger for pull requests (opened, synchronized, reopened)
+    - name: github-pr
+      interceptors:
+        - ref:
+            name: "github"
+          params:
+            - name: "secretRef"
+              value:
+                secretName: github-secret
+                secretKey: secretToken
+            - name: "eventTypes"
+              value: ["pull_request"]
+        - ref:
+            name: "cel"
+          params:
+            - name: "filter"
+              value: "body.action in ['opened', 'synchronize', 'reopened']"
+      bindings:
+        - ref: github-pr-binding
+      template:
+        ref: microservice-pr-trigger
+
+---
+# Create a route to expose the event listener
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: github-webhook-listener
+  labels:
+    app: microservice-demo
+spec:
+  port:
+    targetPort: http-listener
+  to:
+    kind: Service
+    name: el-github-webhook-listener
+    weight: 100
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+
+---
+# Service account for pipeline execution
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pipeline-sa
+  labels:
+    app: microservice-demo
+
+---
+# Role for pipeline service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pipeline-role
+  labels:
+    app: microservice-demo
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+      - services
+      - endpoints
+      - persistentvolumeclaims
+      - configmaps
+      - secrets
+      - serviceaccounts
+    verbs:
+      - get
+      - list
+      - create
+      - update
+      - delete
+      - patch
+      - watch
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
+      - replicasets
+    verbs:
+      - get
+      - list
+      - create
+      - update
+      - delete
+      - patch
+      - watch
+  - apiGroups:
+      - route.openshift.io
+    resources:
+      - routes
+    verbs:
+      - get
+      - list
+      - create
+      - update
+      - delete
+      - patch
+      - watch
+  - apiGroups:
+      - tekton.dev
+    resources:
+      - tasks
+      - taskruns
+      - pipelines
+      - pipelineruns
+    verbs:
+      - get
+      - list
+      - create
+      - update
+      - delete
+      - patch
+      - watch
+  - apiGroups:
+      - triggers.tekton.dev
+    resources:
+      - eventlisteners
+      - triggers
+      - triggerbindings
+      - triggertemplates
+    verbs:
+      - get
+      - list
+      - create
+      - update
+      - delete
+      - patch
+      - watch
+
+---
+# Role binding for pipeline service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pipeline-role-binding
+  labels:
+    app: microservice-demo
+subjects:
+  - kind: ServiceAccount
+    name: pipeline-sa
+    namespace: ""
+roleRef:
+  kind: Role
+  name: pipeline-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Cluster role binding for image building (requires privileged access)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: pipeline-sa-privileged
+  labels:
+    app: microservice-demo
+subjects:
+  - kind: ServiceAccount
+    name: pipeline-sa
+    namespace: ""
+roleRef:
+  kind: ClusterRole
+  name: system:openshift:scc:privileged
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# PVC for pipeline workspace
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pipeline-workspace-pvc
+  labels:
+    app: microservice-demo
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+
+---
+# GitHub webhook secret (to be updated with actual secret)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: github-secret
+  labels:
+    app: microservice-demo
+type: Opaque
+data:
+  secretToken: cGxlYXNlLXVwZGF0ZS13aXRoLXlvdXItc2VjcmV0  # base64 encoded "please-update-with-your-secret"
+
+---
+# Container registry secret (to be updated with actual credentials)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: registry-secret
+  labels:
+    app: microservice-demo
+type: kubernetes.io/dockerconfigjson
+data:
+  .dockerconfigjson: eyJhdXRocyI6e319  # Empty auth config - update with actual registry credentials
+
+---
+# SonarQube secret (optional)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sonarqube-secret
+  labels:
+    app: microservice-demo
+type: Opaque
+data:
+  token: ""  # base64 encoded SonarQube token 

@@ -1,0 +1,267 @@
+groups:
+  - name: microservice-demo.rules
+    interval: 30s
+    rules:
+      # Service Availability Alerts
+      - alert: MicroserviceDown
+        expr: up{job="microservice-demo"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: availability
+        annotations:
+          summary: "Microservice instance is down"
+          description: "Microservice demo instance {{ $labels.instance }} in namespace {{ $labels.namespace }} has been down for more than 1 minute."
+          runbook_url: "https://wiki.company.com/runbooks/microservice-down"
+
+      - alert: MicroserviceInstancesDown
+        expr: count(up{job="microservice-demo"} == 1) by (namespace) < 1
+        for: 5m
+        labels:
+          severity: critical
+          component: availability
+        annotations:
+          summary: "All microservice instances are down"
+          description: "All instances of microservice-demo in namespace {{ $labels.namespace }} are down."
+
+      # HTTP Error Rate Alerts
+      - alert: HighHTTPErrorRate
+        expr: |
+          (
+            rate(http_requests_total{job="microservice-demo", status=~"5.."}[5m]) /
+            rate(http_requests_total{job="microservice-demo"}[5m])
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: application
+        annotations:
+          summary: "High HTTP 5xx error rate"
+          description: "HTTP 5xx error rate is {{ $value | humanizePercentage }} for {{ $labels.instance }}."
+
+      - alert: CriticalHTTPErrorRate
+        expr: |
+          (
+            rate(http_requests_total{job="microservice-demo", status=~"5.."}[5m]) /
+            rate(http_requests_total{job="microservice-demo"}[5m])
+          ) > 0.10
+        for: 2m
+        labels:
+          severity: critical
+          component: application
+        annotations:
+          summary: "Critical HTTP 5xx error rate"
+          description: "HTTP 5xx error rate is {{ $value | humanizePercentage }} for {{ $labels.instance }}."
+
+      # HTTP Response Time Alerts
+      - alert: HighResponseTime
+        expr: |
+          histogram_quantile(0.95,
+            rate(http_request_duration_seconds_bucket{job="microservice-demo"}[5m])
+          ) > 1.0
+        for: 10m
+        labels:
+          severity: warning
+          component: performance
+        annotations:
+          summary: "High HTTP response time"
+          description: "95th percentile response time is {{ $value }}s for {{ $labels.instance }}."
+
+      - alert: VeryHighResponseTime
+        expr: |
+          histogram_quantile(0.95,
+            rate(http_request_duration_seconds_bucket{job="microservice-demo"}[5m])
+          ) > 2.0
+        for: 5m
+        labels:
+          severity: critical
+          component: performance
+        annotations:
+          summary: "Very high HTTP response time"
+          description: "95th percentile response time is {{ $value }}s for {{ $labels.instance }}."
+
+      # Resource Usage Alerts
+      - alert: HighMemoryUsage
+        expr: |
+          (
+            container_memory_usage_bytes{container="microservice-demo"} /
+            container_spec_memory_limit_bytes{container="microservice-demo"}
+          ) > 0.85
+        for: 10m
+        labels:
+          severity: warning
+          component: resources
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value | humanizePercentage }} for pod {{ $labels.pod }}."
+
+      - alert: CriticalMemoryUsage
+        expr: |
+          (
+            container_memory_usage_bytes{container="microservice-demo"} /
+            container_spec_memory_limit_bytes{container="microservice-demo"}
+          ) > 0.95
+        for: 5m
+        labels:
+          severity: critical
+          component: resources
+        annotations:
+          summary: "Critical memory usage"
+          description: "Memory usage is {{ $value | humanizePercentage }} for pod {{ $labels.pod }}."
+
+      - alert: HighCPUUsage
+        expr: |
+          (
+            rate(container_cpu_usage_seconds_total{container="microservice-demo"}[5m]) /
+            (container_spec_cpu_quota{container="microservice-demo"} / container_spec_cpu_period{container="microservice-demo"})
+          ) > 0.8
+        for: 15m
+        labels:
+          severity: warning
+          component: resources
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is {{ $value | humanizePercentage }} for pod {{ $labels.pod }}."
+
+      # Pod Restart Alerts
+      - alert: PodRestartingFrequently
+        expr: rate(kube_pod_container_status_restarts_total{container="microservice-demo"}[1h]) > 0
+        for: 15m
+        labels:
+          severity: warning
+          component: stability
+        annotations:
+          summary: "Pod restarting frequently"
+          description: "Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} is restarting frequently."
+
+      - alert: PodCrashLooping
+        expr: rate(kube_pod_container_status_restarts_total{container="microservice-demo"}[15m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+          component: stability
+        annotations:
+          summary: "Pod in crash loop"
+          description: "Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} is in crash loop."
+
+      # Health Check Alerts
+      - alert: HealthCheckFailing
+        expr: up{job="microservice-demo"} == 1 and probe_success{job="microservice-demo"} == 0
+        for: 3m
+        labels:
+          severity: critical
+          component: health
+        annotations:
+          summary: "Health check failing"
+          description: "Health check is failing for {{ $labels.instance }}."
+
+      # Volume and Storage Alerts
+      - alert: DiskSpaceUsageHigh
+        expr: |
+          (
+            (node_filesystem_size_bytes{mountpoint="/"} - node_filesystem_free_bytes{mountpoint="/"}) /
+            node_filesystem_size_bytes{mountpoint="/"}
+          ) > 0.85
+        for: 10m
+        labels:
+          severity: warning
+          component: storage
+        annotations:
+          summary: "High disk usage"
+          description: "Disk usage is {{ $value | humanizePercentage }} on {{ $labels.instance }}."
+
+      # Network Alerts
+      - alert: HighNetworkLatency
+        expr: |
+          histogram_quantile(0.95,
+            rate(net_conntrack_dialer_conn_attempted_total[5m])
+          ) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          component: network
+        annotations:
+          summary: "High network latency"
+          description: "Network latency is high for {{ $labels.instance }}."
+
+  - name: kubernetes.rules
+    interval: 30s
+    rules:
+      # Kubernetes Node Alerts
+      - alert: NodeNotReady
+        expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+        for: 10m
+        labels:
+          severity: critical
+          component: infrastructure
+        annotations:
+          summary: "Kubernetes node not ready"
+          description: "Node {{ $labels.node }} is not ready."
+
+      - alert: NodeMemoryPressure
+        expr: kube_node_status_condition{condition="MemoryPressure",status="true"} == 1
+        for: 5m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "Node under memory pressure"
+          description: "Node {{ $labels.node }} is under memory pressure."
+
+      - alert: NodeDiskPressure
+        expr: kube_node_status_condition{condition="DiskPressure",status="true"} == 1
+        for: 5m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "Node under disk pressure"
+          description: "Node {{ $labels.node }} is under disk pressure."
+
+      # Kubernetes Pod Alerts
+      - alert: PodNotReady
+        expr: kube_pod_status_ready{condition="true"} == 0
+        for: 10m
+        labels:
+          severity: warning
+          component: workload
+        annotations:
+          summary: "Pod not ready"
+          description: "Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} is not ready."
+
+      - alert: PodOOMKilled
+        expr: increase(kube_pod_container_status_restarts_total[5m]) > 0 and on(pod, namespace) kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1
+        for: 0s
+        labels:
+          severity: warning
+          component: resources
+        annotations:
+          summary: "Pod OOM killed"
+          description: "Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} was OOM killed."
+
+  - name: sli.rules
+    interval: 30s
+    rules:
+      # Service Level Indicators (SLIs)
+      - record: sli:microservice_demo_availability_5m
+        expr: avg_over_time(up{job="microservice-demo"}[5m])
+
+      - record: sli:microservice_demo_error_rate_5m
+        expr: |
+          rate(http_requests_total{job="microservice-demo", status=~"5.."}[5m]) /
+          rate(http_requests_total{job="microservice-demo"}[5m])
+
+      - record: sli:microservice_demo_latency_p95_5m
+        expr: |
+          histogram_quantile(0.95,
+            rate(http_request_duration_seconds_bucket{job="microservice-demo"}[5m])
+          )
+
+      - record: sli:microservice_demo_latency_p99_5m
+        expr: |
+          histogram_quantile(0.99,
+            rate(http_request_duration_seconds_bucket{job="microservice-demo"}[5m])
+          )
+
+      - record: sli:microservice_demo_throughput_5m
+        expr: rate(http_requests_total{job="microservice-demo"}[5m]) 

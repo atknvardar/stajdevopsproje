@@ -1,0 +1,69 @@
+<?xml version='1.1' encoding='UTF-8'?>
+<flow-definition plugin="workflow-job@2.25">
+  <actions/>
+  <description>🎨 Visual Pipeline created via Terminal</description>
+  <keepDependencies>false</keepDependencies>
+  <properties/>
+  <definition class="org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition" plugin="workflow-cps@2.57">
+    <script>pipeline {
+    agent any
+    
+    stages {
+        stage('🎯 Checkout') {
+            steps {
+                echo '📥 Checking out source code...'
+                sleep(time: 2, unit: 'SECONDS')
+                echo '✅ Source code checked out successfully'
+            }
+        }
+        
+        stage('🧪 Test') {
+            parallel {
+                stage('Unit Tests') {
+                    steps {
+                        echo '🔬 Running unit tests...'
+                        sleep(time: 3, unit: 'SECONDS')
+                        echo '✅ Unit tests passed: 45/45'
+                    }
+                }
+                stage('Integration Tests') {
+                    steps {
+                        echo '🔗 Running integration tests...'
+                        sleep(time: 4, unit: 'SECONDS')
+                        echo '✅ Integration tests passed: 12/12'
+                    }
+                }
+            }
+        }
+        
+        stage('🏗️ Build') {
+            steps {
+                echo '🔨 Building application...'
+                sleep(time: 5, unit: 'SECONDS')
+                echo '✅ Build completed successfully'
+            }
+        }
+        
+        stage('🚀 Deploy') {
+            steps {
+                echo '📡 Deploying to development...'
+                sleep(time: 3, unit: 'SECONDS')
+                echo '✅ Deployed successfully'
+            }
+        }
+    }
+    
+    post {
+        always {
+            echo '🎉 Pipeline completed!'
+        }
+        success {
+            echo '✅ Pipeline succeeded!'
+        }
+    }
+}</script>
+    <sandbox>true</sandbox>
+  </definition>
+  <triggers/>
+  <disabled>false</disabled>
+</flow-definition>

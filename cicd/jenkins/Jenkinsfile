@@ -1,0 +1,443 @@
+pipeline {
+    agent any
+    
+    parameters {
+        string(
+            name: 'GIT_URL',
+            defaultValue: 'https://github.com/user/stajdevopsproje.git',
+            description: 'Git repository URL'
+        )
+        string(
+            name: 'GIT_BRANCH',
+            defaultValue: 'main',
+            description: 'Git branch to build'
+        )
+        string(
+            name: 'IMAGE_NAME',
+            defaultValue: 'ghcr.io/user/microservice-demo',
+            description: 'Container image name'
+        )
+        string(
+            name: 'TARGET_NAMESPACE',
+            defaultValue: 'user-demo',
+            description: 'Target OpenShift namespace'
+        )
+        choice(
+            name: 'ENVIRONMENT',
+            choices: ['dev', 'staging', 'prod'],
+            description: 'Deployment environment'
+        )
+        booleanParam(
+            name: 'SKIP_TESTS',
+            defaultValue: false,
+            description: 'Skip unit tests'
+        )
+        booleanParam(
+            name: 'SKIP_SECURITY_SCAN',
+            defaultValue: false,
+            description: 'Skip security scan'
+        )
+    }
+    
+    environment {
+        // Global environment variables
+        APP_NAME = 'microservice-demo'
+        BUILD_DATE = sh(script: 'date -u +%Y-%m-%dT%H:%M:%SZ', returnStdout: true).trim()
+        GIT_COMMIT_SHORT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+        IMAGE_TAG = "${params.IMAGE_NAME}:${env.GIT_COMMIT_SHORT}"
+        
+        // Tool paths
+        OC = 'oc'
+        DOCKER = 'docker'
+        PYTHON = 'python3'
+        PIP = 'pip3'
+    }
+    
+    options {
+        // Keep builds for 30 days
+        buildDiscarder(logRotator(daysToKeepStr: '30', numToKeepStr: '10'))
+        
+        // Timeout after 1 hour
+        timeout(time: 1, unit: 'HOURS')
+        
+        // Timestamps in logs
+        timestamps()
+        
+        // ANSI color output
+        ansiColor('xterm')
+    }
+    
+    stages {
+        stage('📥 Checkout') {
+            steps {
+                script {
+                    echo "🚀 Starting pipeline for ${params.IMAGE_NAME}"
+                    echo "📦 Building from branch: ${params.GIT_BRANCH}"
+                    echo "🎯 Target environment: ${params.ENVIRONMENT}"
+                }
+                
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: "*/${params.GIT_BRANCH}"]],
+                    userRemoteConfigs: [[url: "${params.GIT_URL}"]]
+                ])
+                
+                script {
+                    env.GIT_COMMIT_SHORT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                    env.IMAGE_TAG = "${params.IMAGE_NAME}:${env.GIT_COMMIT_SHORT}"
+                    echo "📋 Git commit: ${env.GIT_COMMIT_SHORT}"
+                    echo "🏷️ Image tag: ${env.IMAGE_TAG}"
+                }
+            }
+        }
+        
+        stage('🧪 Unit Tests') {
+            when {
+                not { params.SKIP_TESTS }
+            }
+            steps {
+                dir('app') {
+                    sh '''
+                        echo "📦 Installing dependencies..."
+                        ${PIP} install -r requirements.txt
+                        ${PIP} install coverage pytest-html black isort flake8 pylint
+                        
+                        echo "🔍 Running code quality checks..."
+                        black --check app/ || echo "⚠️ Code formatting issues found"
+                        isort --check-only app/ || echo "⚠️ Import sorting issues found"
+                        flake8 app/ --max-line-length=100 || echo "⚠️ Linting issues found"
+                        
+                        echo "🧪 Running unit tests..."
+                        ${PYTHON} -m pytest tests/ \
+                            --cov=app \
+                            --cov-report=xml:coverage.xml \
+                            --cov-report=term-missing \
+                            --cov-report=html:htmlcov \
+                            --cov-fail-under=80 \
+                            --junit-xml=test-results.xml \
+                            --html=test-report.html \
+                            --self-contained-html \
+                            -v
+                    '''
+                }
+            }
+            post {
+                always {
+                    // Publish test results
+                    publishTestResults testResultsPattern: 'app/test-results.xml'
+                    publishHTML([
+                        allowMissing: false,
+                        alwaysLinkToLastBuild: true,
+                        keepAll: true,
+                        reportDir: 'app/htmlcov',
+                        reportFiles: 'index.html',
+                        reportName: 'Coverage Report'
+                    ])
+                    publishHTML([
+                        allowMissing: false,
+                        alwaysLinkToLastBuild: true,
+                        keepAll: true,
+                        reportDir: 'app',
+                        reportFiles: 'test-report.html',
+                        reportName: 'Test Report'
+                    ])
+                }
+            }
+        }
+        
+        stage('🔨 Build Image') {
+            steps {
+                script {
+                    echo "🔨 Building container image..."
+                    sh """
+                        ${DOCKER} build \
+                            --target runtime \
+                            --build-arg BUILD_DATE='${env.BUILD_DATE}' \
+                            --build-arg VERSION='1.0.0' \
+                            --build-arg COMMIT_HASH='${env.GIT_COMMIT_SHORT}' \
+                            -t '${env.IMAGE_TAG}' \
+                            -f build/Dockerfile \
+                            .
+                    """
+                    
+                    echo "✅ Image built successfully: ${env.IMAGE_TAG}"
+                }
+            }
+        }
+        
+        stage('🔒 Security Scan') {
+            when {
+                not { params.SKIP_SECURITY_SCAN }
+            }
+            steps {
+                script {
+                    echo "🔒 Running security scans..."
+                    
+                    // Create reports directory
+                    sh 'mkdir -p security-reports'
+                    
+                    // Trivy scan
+                    sh """
+                        if command -v trivy &> /dev/null; then
+                            echo "Running Trivy security scan..."
+                            trivy image --format json --output security-reports/trivy-report.json '${env.IMAGE_TAG}' || true
+                            trivy image --format table --output security-reports/trivy-report.txt '${env.IMAGE_TAG}' || true
+                        else
+                            echo "⚠️ Trivy not installed, skipping vulnerability scan"
+                        fi
+                    """
+                    
+                    // Hadolint for Dockerfile
+                    sh """
+                        if command -v hadolint &> /dev/null; then
+                            echo "Running Hadolint on Dockerfile..."
+                            hadolint build/Dockerfile > security-reports/hadolint-report.txt || true
+                        else
+                            echo "⚠️ Hadolint not installed, skipping Dockerfile lint"
+                        fi
+                    """
+                }
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'security-reports/*', allowEmptyArchive: true
+                }
+            }
+        }
+        
+        stage('📤 Push Image') {
+            steps {
+                script {
+                    echo "📤 Pushing image to registry..."
+                    
+                    withCredentials([usernamePassword(
+                        credentialsId: 'registry-credentials',
+                        usernameVariable: 'REGISTRY_USER',
+                        passwordVariable: 'REGISTRY_PASS'
+                    )]) {
+                        sh """
+                            echo "\${REGISTRY_PASS}" | ${DOCKER} login ghcr.io -u "\${REGISTRY_USER}" --password-stdin
+                            ${DOCKER} push '${env.IMAGE_TAG}'
+                            
+                            # Also tag as latest for the environment
+                            ${DOCKER} tag '${env.IMAGE_TAG}' '${params.IMAGE_NAME}:${params.ENVIRONMENT}'
+                            ${DOCKER} push '${params.IMAGE_NAME}:${params.ENVIRONMENT}'
+                        """
+                    }
+                    
+                    echo "✅ Image pushed successfully"
+                }
+            }
+        }
+        
+        stage('🚀 Deploy to Dev') {
+            when {
+                anyOf {
+                    environment name: 'ENVIRONMENT', value: 'dev'
+                    environment name: 'ENVIRONMENT', value: 'staging'
+                }
+            }
+            steps {
+                script {
+                    echo "🚀 Deploying to ${params.ENVIRONMENT} environment..."
+                    
+                    withCredentials([string(credentialsId: 'openshift-token', variable: 'OC_TOKEN')]) {
+                        sh """
+                            # Login to OpenShift
+                            ${OC} login --token="\${OC_TOKEN}" --server=\${OPENSHIFT_SERVER}
+                            
+                            # Switch to target namespace
+                            ${OC} project ${params.TARGET_NAMESPACE}
+                            
+                            # Update image in deployment
+                            cd openshift/overlays/${params.ENVIRONMENT}
+                            
+                            # Update kustomization with new image
+                            if grep -q "images:" kustomization.yaml; then
+                                sed -i "s|newTag:.*|newTag: ${env.GIT_COMMIT_SHORT}|g" kustomization.yaml
+                            else
+                                cat >> kustomization.yaml << EOF
+
+images:
+- name: microservice-demo
+  newName: ${params.IMAGE_NAME}
+  newTag: ${env.GIT_COMMIT_SHORT}
+EOF
+                            fi
+                            
+                            # Apply manifests
+                            ${OC} apply -k .
+                            
+                            # Wait for rollout
+                            ${OC} rollout status deployment/microservice-demo --timeout=600s
+                        """
+                    }
+                    
+                    echo "✅ Deployment completed successfully"
+                }
+            }
+        }
+        
+        stage('🧪 E2E Tests') {
+            when {
+                anyOf {
+                    environment name: 'ENVIRONMENT', value: 'dev'
+                    environment name: 'ENVIRONMENT', value: 'staging'
+                }
+            }
+            steps {
+                script {
+                    echo "🧪 Running end-to-end tests..."
+                    
+                    withCredentials([string(credentialsId: 'openshift-token', variable: 'OC_TOKEN')]) {
+                        sh """
+                            # Get service endpoint
+                            SERVICE_IP=\$(${OC} get service microservice-demo -o jsonpath='{.spec.clusterIP}')
+                            SERVICE_PORT=\$(${OC} get service microservice-demo -o jsonpath='{.spec.ports[0].port}')
+                            
+                            # Test health endpoints
+                            echo "Testing health endpoints..."
+                            curl -f "http://\${SERVICE_IP}:\${SERVICE_PORT}/healthz" || exit 1
+                            curl -f "http://\${SERVICE_IP}:\${SERVICE_PORT}/ready" || exit 1
+                            curl -f "http://\${SERVICE_IP}:\${SERVICE_PORT}/api/v1/hello" || exit 1
+                            
+                            echo "✅ E2E tests passed"
+                        """
+                    }
+                }
+            }
+        }
+        
+        stage('🚦 Production Approval') {
+            when {
+                environment name: 'ENVIRONMENT', value: 'prod'
+            }
+            steps {
+                script {
+                    echo "🚦 Production deployment requires manual approval"
+                    
+                    def deployApproved = input(
+                        message: 'Deploy to Production?',
+                        parameters: [
+                            choice(
+                                name: 'APPROVE',
+                                choices: ['No', 'Yes'],
+                                description: 'Approve production deployment?'
+                            )
+                        ]
+                    )
+                    
+                    if (deployApproved != 'Yes') {
+                        error('Production deployment was not approved')
+                    }
+                    
+                    echo "✅ Production deployment approved"
+                }
+            }
+        }
+        
+        stage('🚀 Deploy to Production') {
+            when {
+                environment name: 'ENVIRONMENT', value: 'prod'
+            }
+            steps {
+                script {
+                    echo "🚀 Deploying to production environment..."
+                    
+                    withCredentials([string(credentialsId: 'openshift-token', variable: 'OC_TOKEN')]) {
+                        sh """
+                            # Login to OpenShift
+                            ${OC} login --token="\${OC_TOKEN}" --server=\${OPENSHIFT_SERVER}
+                            
+                            # Switch to target namespace
+                            ${OC} project ${params.TARGET_NAMESPACE}
+                            
+                            # Deploy to production
+                            cd openshift/overlays/prod
+                            
+                            # Update kustomization with new image
+                            if grep -q "images:" kustomization.yaml; then
+                                sed -i "s|newTag:.*|newTag: ${env.GIT_COMMIT_SHORT}|g" kustomization.yaml
+                            else
+                                cat >> kustomization.yaml << EOF
+
+images:
+- name: microservice-demo
+  newName: ${params.IMAGE_NAME}
+  newTag: ${env.GIT_COMMIT_SHORT}
+EOF
+                            fi
+                            
+                            # Apply manifests
+                            ${OC} apply -k .
+                            
+                            # Wait for rollout
+                            ${OC} rollout status deployment/microservice-demo --timeout=600s
+                        """
+                    }
+                    
+                    echo "✅ Production deployment completed successfully"
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            script {
+                echo "📊 Pipeline completed with status: ${currentBuild.currentResult}"
+                
+                // Archive build artifacts
+                archiveArtifacts artifacts: 'app/test-results.xml,app/coverage.xml', allowEmptyArchive: true
+                
+                // Clean up Docker images
+                sh """
+                    ${DOCKER} rmi '${env.IMAGE_TAG}' || true
+                    ${DOCKER} system prune -f || true
+                """
+            }
+        }
+        
+        success {
+            script {
+                echo "✅ Pipeline completed successfully!"
+                
+                // Send success notification
+                if (env.SLACK_WEBHOOK) {
+                    slackSend(
+                        channel: '#deployments',
+                        color: 'good',
+                        message: "✅ Deployment successful: ${env.JOB_NAME} #${env.BUILD_NUMBER}\nImage: ${env.IMAGE_TAG}\nEnvironment: ${params.ENVIRONMENT}"
+                    )
+                }
+            }
+        }
+        
+        failure {
+            script {
+                echo "❌ Pipeline failed!"
+                
+                // Send failure notification
+                if (env.SLACK_WEBHOOK) {
+                    slackSend(
+                        channel: '#deployments',
+                        color: 'danger',
+                        message: "❌ Deployment failed: ${env.JOB_NAME} #${env.BUILD_NUMBER}\nBranch: ${params.GIT_BRANCH}\nEnvironment: ${params.ENVIRONMENT}"
+                    )
+                }
+            }
+        }
+        
+        unstable {
+            script {
+                echo "⚠️ Pipeline completed with warnings"
+            }
+        }
+        
+        aborted {
+            script {
+                echo "⏹️ Pipeline was aborted"
+            }
+        }
+    }
+} 

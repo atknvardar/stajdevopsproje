@@ -1,0 +1,81 @@
+MIT License
+
+Copyright (c) 2024 Enterprise DevOps Pipeline Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+## Additional Information
+
+This project includes comprehensive DevOps pipeline implementation with the following components:
+
+### Third-Party Licenses
+
+This project uses various open-source tools and libraries. Please refer to their respective licenses:
+
+- **FastAPI**: MIT License
+- **Python**: Python Software Foundation License
+- **Docker**: Apache License 2.0
+- **Kubernetes**: Apache License 2.0
+- **OpenShift**: Apache License 2.0
+- **Tekton**: Apache License 2.0
+- **Prometheus**: Apache License 2.0
+- **Grafana**: Apache License 2.0
+- **Loki**: Apache License 2.0
+
+### Educational Use
+
+This project is designed for educational and reference purposes, demonstrating:
+- Modern DevOps practices
+- Cloud-native application development
+- Kubernetes/OpenShift deployment patterns
+- CI/CD pipeline automation
+- Security and governance implementation
+- Observability and monitoring setup
+
+### Commercial Use
+
+While this project is licensed under the MIT License allowing commercial use, 
+users are responsible for:
+- Ensuring compliance with all third-party licenses
+- Implementing appropriate security measures for production use
+- Conducting security assessments and vulnerability testing
+- Meeting regulatory and compliance requirements
+
+### Support and Warranty
+
+This software is provided "as is" without warranty. While the contributors 
+strive to maintain high quality and security standards, users are responsible 
+for:
+- Testing in their specific environments
+- Implementing additional security measures as needed
+- Maintaining and updating dependencies
+- Monitoring for security vulnerabilities
+
+### Attribution
+
+If you use this project or derive work from it, attribution is appreciated but not required. 
+Consider citing this project in your documentation or presentations when showcasing 
+DevOps practices or cloud-native architectures.
+
+For questions about licensing or usage, please refer to:
+- Project documentation in the `/docs` directory
+- Contributing guidelines in `CONTRIBUTING.md`
+- GitHub Issues for technical questions 

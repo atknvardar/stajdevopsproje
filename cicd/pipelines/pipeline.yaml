@@ -1,0 +1,190 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: microservice-pipeline
+  labels:
+    app: microservice-demo
+    version: v1.0.0
+spec:
+  description: |
+    Complete CI/CD pipeline for the microservice demo application
+    Stages: git-clone -> unit-test -> build-image -> deploy-dev -> e2e-test -> deploy-prod
+  params:
+    - name: git-url
+      type: string
+      description: Git repository URL
+      default: https://github.com/user/stajdevopsproje.git
+    - name: git-revision
+      type: string
+      description: Git revision to checkout
+      default: main
+    - name: image-name
+      type: string
+      description: Container image name
+      default: ghcr.io/user/microservice-demo
+    - name: target-namespace
+      type: string
+      description: Target deployment namespace
+      default: user-demo
+    - name: registry-url
+      type: string
+      description: Container registry URL
+      default: ghcr.io
+    - name: sonarqube-url
+      type: string
+      description: SonarQube server URL
+      default: ""
+    - name: slack-webhook
+      type: string
+      description: Slack webhook for notifications
+      default: ""
+
+  workspaces:
+    - name: shared-workspace
+      description: Shared workspace for pipeline data
+    - name: docker-config
+      description: Docker registry configuration
+
+  tasks:
+    # Stage 1: Git Clone
+    - name: git-clone
+      taskRef:
+        name: git-clone
+        kind: ClusterTask
+      workspaces:
+        - name: output
+          workspace: shared-workspace
+      params:
+        - name: url
+          value: $(params.git-url)
+        - name: revision
+          value: $(params.git-revision)
+        - name: deleteExisting
+          value: "true"
+
+    # Stage 2: Unit Tests & Quality Gate
+    - name: unit-test
+      taskRef:
+        name: unit-test-task
+      runAfter:
+        - git-clone
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+      params:
+        - name: sonarqube-url
+          value: $(params.sonarqube-url)
+
+    # Stage 3: Build & Push Container Image
+    - name: build-image
+      taskRef:
+        name: buildah
+        kind: ClusterTask
+      runAfter:
+        - unit-test
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+        - name: dockerconfig
+          workspace: docker-config
+      params:
+        - name: IMAGE
+          value: "$(params.image-name):$(tasks.git-clone.results.commit)"
+        - name: DOCKERFILE
+          value: build/Dockerfile
+        - name: CONTEXT
+          value: .
+        - name: BUILD_EXTRA_ARGS
+          value: "--build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') --build-arg VERSION=1.0.0 --build-arg COMMIT_HASH=$(tasks.git-clone.results.commit)"
+
+    # Stage 4: Security Scan
+    - name: security-scan
+      taskRef:
+        name: security-scan-task
+      runAfter:
+        - build-image
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+      params:
+        - name: image-name
+          value: "$(params.image-name):$(tasks.git-clone.results.commit)"
+
+    # Stage 5: Deploy to Development
+    - name: deploy-dev
+      taskRef:
+        name: deploy-task
+      runAfter:
+        - security-scan
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+      params:
+        - name: image-name
+          value: "$(params.image-name):$(tasks.git-clone.results.commit)"
+        - name: namespace
+          value: $(params.target-namespace)
+        - name: environment
+          value: dev
+        - name: manifests-path
+          value: openshift/overlays/dev
+
+    # Stage 6: End-to-End Tests
+    - name: e2e-test
+      taskRef:
+        name: e2e-test-task
+      runAfter:
+        - deploy-dev
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+      params:
+        - name: namespace
+          value: $(params.target-namespace)
+        - name: app-name
+          value: microservice-demo
+
+    # Stage 7: Production Deployment (Manual Approval)
+    - name: deploy-prod-approval
+      taskRef:
+        name: approval-task
+      runAfter:
+        - e2e-test
+      params:
+        - name: message
+          value: "Deploy to production? Image: $(params.image-name):$(tasks.git-clone.results.commit)"
+        - name: slack-webhook
+          value: $(params.slack-webhook)
+
+    - name: deploy-prod
+      taskRef:
+        name: deploy-task
+      runAfter:
+        - deploy-prod-approval
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+      params:
+        - name: image-name
+          value: "$(params.image-name):$(tasks.git-clone.results.commit)"
+        - name: namespace
+          value: $(params.target-namespace)
+        - name: environment
+          value: prod
+        - name: manifests-path
+          value: openshift/overlays/prod
+
+  finally:
+    # Notification task that runs regardless of pipeline result
+    - name: notify-result
+      taskRef:
+        name: notification-task
+      params:
+        - name: pipeline-status
+          value: $(tasks.status)
+        - name: slack-webhook
+          value: $(params.slack-webhook)
+        - name: git-commit
+          value: $(tasks.git-clone.results.commit)
+        - name: image-name
+          value: $(params.image-name) 

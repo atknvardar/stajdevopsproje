@@ -1,0 +1,583 @@
+---
+# End-to-End Test Suite for Microservice
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: microservice-e2e-tests
+  namespace: testing
+  labels:
+    app.kubernetes.io/name: testing
+    app.kubernetes.io/component: e2e-tests
+data:
+  test-config.yaml: |
+    test_suite:
+      name: "Microservice End-to-End Tests"
+      version: "1.0"
+      timeout: 300
+      retry_attempts: 3
+      
+    environments:
+      - name: development
+        base_url: "http://microservice-demo.microservice-demo-dev.svc.cluster.local:8080"
+        namespace: microservice-demo-dev
+      - name: staging
+        base_url: "http://microservice-demo.microservice-demo-staging.svc.cluster.local:8080"
+        namespace: microservice-demo-staging
+      - name: production
+        base_url: "http://microservice-demo.microservice-demo-prod.svc.cluster.local:8080"
+        namespace: microservice-demo-prod
+    
+    tests:
+      health_checks:
+        - name: "Liveness Probe"
+          endpoint: "/healthz"
+          method: "GET"
+          expected_status: 200
+          expected_response:
+            status: "healthy"
+        
+        - name: "Readiness Probe"
+          endpoint: "/ready"
+          method: "GET"
+          expected_status: 200
+          expected_response:
+            status: "ready"
+      
+      api_tests:
+        - name: "Hello API Basic"
+          endpoint: "/api/v1/hello"
+          method: "GET"
+          expected_status: 200
+          expected_response:
+            message: "Hello from microservice!"
+            timestamp: "*"
+            version: "*"
+        
+        - name: "Hello API with Name"
+          endpoint: "/api/v1/hello?name=TestUser"
+          method: "GET"
+          expected_status: 200
+          expected_response:
+            message: "Hello TestUser from microservice!"
+            timestamp: "*"
+            version: "*"
+        
+        - name: "Hello API POST"
+          endpoint: "/api/v1/hello"
+          method: "POST"
+          headers:
+            Content-Type: "application/json"
+          body: |
+            {"name": "APITester"}
+          expected_status: 200
+          expected_response:
+            message: "Hello APITester from microservice!"
+      
+      metrics_tests:
+        - name: "Prometheus Metrics"
+          endpoint: "/metrics"
+          method: "GET"
+          expected_status: 200
+          contains:
+            - "http_requests_total"
+            - "http_request_duration_seconds"
+            - "process_cpu_seconds_total"
+        
+        - name: "Custom Application Metrics"
+          endpoint: "/metrics"
+          method: "GET"
+          expected_status: 200
+          contains:
+            - "app_requests_total"
+            - "app_request_duration_seconds"
+            - "app_version_info"
+      
+      error_handling:
+        - name: "404 Not Found"
+          endpoint: "/api/v1/nonexistent"
+          method: "GET"
+          expected_status: 404
+          expected_response:
+            detail: "Not Found"
+        
+        - name: "Invalid Method"
+          endpoint: "/api/v1/hello"
+          method: "DELETE"
+          expected_status: 405
+          expected_response:
+            detail: "Method Not Allowed"
+      
+      security_tests:
+        - name: "CORS Headers"
+          endpoint: "/api/v1/hello"
+          method: "OPTIONS"
+          expected_status: 200
+          expected_headers:
+            Access-Control-Allow-Origin: "*"
+            Access-Control-Allow-Methods: "GET, POST, OPTIONS"
+        
+        - name: "Security Headers"
+          endpoint: "/api/v1/hello"
+          method: "GET"
+          expected_status: 200
+          expected_headers:
+            X-Content-Type-Options: "nosniff"
+            X-Frame-Options: "DENY"
+      
+      performance_tests:
+        - name: "Response Time Test"
+          endpoint: "/api/v1/hello"
+          method: "GET"
+          expected_status: 200
+          max_response_time: 200  # milliseconds
+        
+        - name: "Load Test"
+          endpoint: "/api/v1/hello"
+          method: "GET"
+          concurrent_requests: 10
+          total_requests: 100
+          expected_success_rate: 99  # percentage
+
+  run-tests.py: |
+    #!/usr/bin/env python3
+    """
+    Microservice End-to-End Test Runner
+    """
+    
+    import requests
+    import json
+    import time
+    import yaml
+    import sys
+    import concurrent.futures
+    import statistics
+    from datetime import datetime
+    from typing import Dict, List, Any
+    
+    class MicroserviceTestRunner:
+        def __init__(self, config_file: str):
+            with open(config_file, 'r') as f:
+                self.config = yaml.safe_load(f)
+            self.results = {
+                'suite_name': self.config['test_suite']['name'],
+                'start_time': datetime.now().isoformat(),
+                'tests': [],
+                'summary': {
+                    'total': 0,
+                    'passed': 0,
+                    'failed': 0,
+                    'success_rate': 0
+                }
+            }
+        
+        def run_test(self, test: Dict[str, Any], base_url: str) -> Dict[str, Any]:
+            """Run a single test"""
+            test_result = {
+                'name': test['name'],
+                'endpoint': test['endpoint'],
+                'method': test['method'],
+                'start_time': datetime.now().isoformat(),
+                'status': 'PASS',
+                'error': None,
+                'response_time': 0,
+                'details': {}
+            }
+            
+            try:
+                start_time = time.time()
+                
+                # Prepare request
+                url = base_url + test['endpoint']
+                headers = test.get('headers', {})
+                body = test.get('body')
+                
+                # Make request
+                response = requests.request(
+                    method=test['method'],
+                    url=url,
+                    headers=headers,
+                    data=body,
+                    timeout=30
+                )
+                
+                response_time = (time.time() - start_time) * 1000
+                test_result['response_time'] = response_time
+                
+                # Check status code
+                expected_status = test.get('expected_status', 200)
+                if response.status_code != expected_status:
+                    test_result['status'] = 'FAIL'
+                    test_result['error'] = f"Expected status {expected_status}, got {response.status_code}"
+                    return test_result
+                
+                # Check response content
+                if 'expected_response' in test:
+                    try:
+                        response_json = response.json()
+                        expected = test['expected_response']
+                        
+                        for key, value in expected.items():
+                            if value == "*":  # Wildcard
+                                continue
+                            if key not in response_json:
+                                test_result['status'] = 'FAIL'
+                                test_result['error'] = f"Missing key '{key}' in response"
+                                return test_result
+                            if response_json[key] != value:
+                                test_result['status'] = 'FAIL'
+                                test_result['error'] = f"Expected {key}='{value}', got '{response_json[key]}'"
+                                return test_result
+                    except json.JSONDecodeError:
+                        test_result['status'] = 'FAIL'
+                        test_result['error'] = "Response is not valid JSON"
+                        return test_result
+                
+                # Check headers
+                if 'expected_headers' in test:
+                    for header, expected_value in test['expected_headers'].items():
+                        actual_value = response.headers.get(header)
+                        if actual_value != expected_value:
+                            test_result['status'] = 'FAIL'
+                            test_result['error'] = f"Expected header {header}='{expected_value}', got '{actual_value}'"
+                            return test_result
+                
+                # Check content contains
+                if 'contains' in test:
+                    response_text = response.text
+                    for expected_text in test['contains']:
+                        if expected_text not in response_text:
+                            test_result['status'] = 'FAIL'
+                            test_result['error'] = f"Response does not contain '{expected_text}'"
+                            return test_result
+                
+                # Check response time
+                if 'max_response_time' in test:
+                    max_time = test['max_response_time']
+                    if response_time > max_time:
+                        test_result['status'] = 'FAIL'
+                        test_result['error'] = f"Response time {response_time:.2f}ms exceeds {max_time}ms"
+                        return test_result
+                
+                test_result['details'] = {
+                    'status_code': response.status_code,
+                    'response_size': len(response.content),
+                    'headers': dict(response.headers)
+                }
+                
+            except requests.exceptions.RequestException as e:
+                test_result['status'] = 'FAIL'
+                test_result['error'] = f"Request failed: {str(e)}"
+            except Exception as e:
+                test_result['status'] = 'FAIL'
+                test_result['error'] = f"Test failed: {str(e)}"
+            
+            test_result['end_time'] = datetime.now().isoformat()
+            return test_result
+        
+        def run_load_test(self, test: Dict[str, Any], base_url: str) -> Dict[str, Any]:
+            """Run load test with concurrent requests"""
+            test_result = {
+                'name': test['name'],
+                'endpoint': test['endpoint'],
+                'method': test['method'],
+                'start_time': datetime.now().isoformat(),
+                'status': 'PASS',
+                'error': None,
+                'details': {}
+            }
+            
+            concurrent_requests = test.get('concurrent_requests', 1)
+            total_requests = test.get('total_requests', 1)
+            expected_success_rate = test.get('expected_success_rate', 100)
+            
+            url = base_url + test['endpoint']
+            response_times = []
+            success_count = 0
+            
+            def make_request():
+                try:
+                    start_time = time.time()
+                    response = requests.get(url, timeout=10)
+                    response_time = (time.time() - start_time) * 1000
+                    response_times.append(response_time)
+                    return response.status_code == 200
+                except:
+                    return False
+            
+            try:
+                start_time = time.time()
+                
+                with concurrent.futures.ThreadPoolExecutor(max_workers=concurrent_requests) as executor:
+                    futures = [executor.submit(make_request) for _ in range(total_requests)]
+                    for future in concurrent.futures.as_completed(futures):
+                        if future.result():
+                            success_count += 1
+                
+                total_time = time.time() - start_time
+                success_rate = (success_count / total_requests) * 100
+                
+                test_result['details'] = {
+                    'total_requests': total_requests,
+                    'successful_requests': success_count,
+                    'success_rate': success_rate,
+                    'total_time': total_time,
+                    'requests_per_second': total_requests / total_time,
+                    'avg_response_time': statistics.mean(response_times) if response_times else 0,
+                    'min_response_time': min(response_times) if response_times else 0,
+                    'max_response_time': max(response_times) if response_times else 0
+                }
+                
+                if success_rate < expected_success_rate:
+                    test_result['status'] = 'FAIL'
+                    test_result['error'] = f"Success rate {success_rate:.2f}% below expected {expected_success_rate}%"
+                
+            except Exception as e:
+                test_result['status'] = 'FAIL'
+                test_result['error'] = f"Load test failed: {str(e)}"
+            
+            test_result['end_time'] = datetime.now().isoformat()
+            return test_result
+        
+        def run_tests_for_environment(self, environment: Dict[str, Any]) -> List[Dict[str, Any]]:
+            """Run all tests for a specific environment"""
+            base_url = environment['base_url']
+            env_results = []
+            
+            print(f"\n=== Testing {environment['name']} environment ===")
+            print(f"Base URL: {base_url}")
+            
+            # Run health checks
+            for test in self.config['tests']['health_checks']:
+                print(f"Running: {test['name']}")
+                result = self.run_test(test, base_url)
+                result['category'] = 'health_checks'
+                result['environment'] = environment['name']
+                env_results.append(result)
+                print(f"  Result: {result['status']} ({result['response_time']:.2f}ms)")
+            
+            # Run API tests
+            for test in self.config['tests']['api_tests']:
+                print(f"Running: {test['name']}")
+                result = self.run_test(test, base_url)
+                result['category'] = 'api_tests'
+                result['environment'] = environment['name']
+                env_results.append(result)
+                print(f"  Result: {result['status']} ({result['response_time']:.2f}ms)")
+            
+            # Run metrics tests
+            for test in self.config['tests']['metrics_tests']:
+                print(f"Running: {test['name']}")
+                result = self.run_test(test, base_url)
+                result['category'] = 'metrics_tests'
+                result['environment'] = environment['name']
+                env_results.append(result)
+                print(f"  Result: {result['status']} ({result['response_time']:.2f}ms)")
+            
+            # Run error handling tests
+            for test in self.config['tests']['error_handling']:
+                print(f"Running: {test['name']}")
+                result = self.run_test(test, base_url)
+                result['category'] = 'error_handling'
+                result['environment'] = environment['name']
+                env_results.append(result)
+                print(f"  Result: {result['status']} ({result['response_time']:.2f}ms)")
+            
+            # Run security tests
+            for test in self.config['tests']['security_tests']:
+                print(f"Running: {test['name']}")
+                result = self.run_test(test, base_url)
+                result['category'] = 'security_tests'
+                result['environment'] = environment['name']
+                env_results.append(result)
+                print(f"  Result: {result['status']} ({result['response_time']:.2f}ms)")
+            
+            # Run performance tests
+            for test in self.config['tests']['performance_tests']:
+                print(f"Running: {test['name']}")
+                if 'concurrent_requests' in test:
+                    result = self.run_load_test(test, base_url)
+                else:
+                    result = self.run_test(test, base_url)
+                result['category'] = 'performance_tests'
+                result['environment'] = environment['name']
+                env_results.append(result)
+                print(f"  Result: {result['status']}")
+                if 'details' in result and 'requests_per_second' in result['details']:
+                    print(f"    RPS: {result['details']['requests_per_second']:.2f}")
+            
+            return env_results
+        
+        def run_all_tests(self):
+            """Run tests for all environments"""
+            print(f"Starting test suite: {self.config['test_suite']['name']}")
+            
+            all_results = []
+            
+            for environment in self.config['environments']:
+                env_results = self.run_tests_for_environment(environment)
+                all_results.extend(env_results)
+            
+            # Calculate summary
+            self.results['tests'] = all_results
+            self.results['summary']['total'] = len(all_results)
+            self.results['summary']['passed'] = len([r for r in all_results if r['status'] == 'PASS'])
+            self.results['summary']['failed'] = len([r for r in all_results if r['status'] == 'FAIL'])
+            self.results['summary']['success_rate'] = (self.results['summary']['passed'] / self.results['summary']['total']) * 100
+            self.results['end_time'] = datetime.now().isoformat()
+            
+            return self.results
+        
+        def print_summary(self):
+            """Print test results summary"""
+            print("\n" + "="*60)
+            print("TEST RESULTS SUMMARY")
+            print("="*60)
+            print(f"Suite: {self.results['suite_name']}")
+            print(f"Total Tests: {self.results['summary']['total']}")
+            print(f"Passed: {self.results['summary']['passed']}")
+            print(f"Failed: {self.results['summary']['failed']}")
+            print(f"Success Rate: {self.results['summary']['success_rate']:.2f}%")
+            
+            # Print failures
+            failed_tests = [t for t in self.results['tests'] if t['status'] == 'FAIL']
+            if failed_tests:
+                print("\nFAILED TESTS:")
+                for test in failed_tests:
+                    print(f"  ❌ {test['environment']}/{test['category']}/{test['name']}")
+                    print(f"     Error: {test['error']}")
+            
+            print("\nPASSED TESTS:")
+            passed_tests = [t for t in self.results['tests'] if t['status'] == 'PASS']
+            for test in passed_tests:
+                print(f"  ✅ {test['environment']}/{test['category']}/{test['name']}")
+        
+        def save_results(self, filename: str):
+            """Save results to JSON file"""
+            with open(filename, 'w') as f:
+                json.dump(self.results, f, indent=2)
+            print(f"\nResults saved to: {filename}")
+    
+    if __name__ == "__main__":
+        if len(sys.argv) != 2:
+            print("Usage: python run-tests.py <config-file>")
+            sys.exit(1)
+        
+        config_file = sys.argv[1]
+        runner = MicroserviceTestRunner(config_file)
+        
+        try:
+            runner.run_all_tests()
+            runner.print_summary()
+            runner.save_results('test-results.json')
+            
+            # Exit with error code if tests failed
+            if runner.results['summary']['failed'] > 0:
+                sys.exit(1)
+            
+        except KeyboardInterrupt:
+            print("\nTests interrupted by user")
+            sys.exit(1)
+        except Exception as e:
+            print(f"\nTest suite failed: {str(e)}")
+            sys.exit(1)
+
+---
+# Test Job for Running E2E Tests
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: microservice-e2e-tests
+  namespace: testing
+  labels:
+    app.kubernetes.io/name: testing
+    app.kubernetes.io/component: e2e-tests
+spec:
+  template:
+    metadata:
+      labels:
+        app: microservice-e2e-tests
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: test-runner
+          image: python:3.9-slim
+          command: ["/bin/bash"]
+          args:
+            - -c
+            - |
+              pip install requests pyyaml
+              python /tests/run-tests.py /tests/test-config.yaml
+          volumeMounts:
+            - name: test-scripts
+              mountPath: /tests
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: test-scripts
+          configMap:
+            name: microservice-e2e-tests
+            defaultMode: 0755
+  backoffLimit: 3
+
+---
+# CronJob for Scheduled Testing
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: microservice-e2e-tests-scheduled
+  namespace: testing
+  labels:
+    app.kubernetes.io/name: testing
+    app.kubernetes.io/component: scheduled-tests
+spec:
+  schedule: "0 */6 * * *"  # Every 6 hours
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: microservice-e2e-tests-scheduled
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: test-runner
+              image: python:3.9-slim
+              command: ["/bin/bash"]
+              args:
+                - -c
+                - |
+                  pip install requests pyyaml
+                  python /tests/run-tests.py /tests/test-config.yaml
+              volumeMounts:
+                - name: test-scripts
+                  mountPath: /tests
+                - name: results
+                  mountPath: /results
+              env:
+                - name: SLACK_WEBHOOK_URL
+                  valueFrom:
+                    secretRef:
+                      name: notification-secrets
+                      key: slack-webhook-url
+              resources:
+                requests:
+                  cpu: 200m
+                  memory: 256Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+          volumes:
+            - name: test-scripts
+              configMap:
+                name: microservice-e2e-tests
+                defaultMode: 0755
+            - name: results
+              persistentVolumeClaim:
+                claimName: test-results-pvc
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1 

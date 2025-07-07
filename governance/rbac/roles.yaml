@@ -1,0 +1,312 @@
+---
+# Developer Role - Full access to development namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: microservice-demo-dev
+  name: developer
+  labels:
+    app.kubernetes.io/name: rbac
+    app.kubernetes.io/component: developer-role
+rules:
+  # Full access to application resources
+  - apiGroups: [""]
+    resources: ["pods", "services", "configmaps", "secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Deployment management
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Ingress and routes
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  - apiGroups: ["route.openshift.io"]
+    resources: ["routes"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Monitoring resources
+  - apiGroups: ["monitoring.coreos.com"]
+    resources: ["servicemonitors", "podmonitors"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Events and logs
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+  
+  # Pod logs and exec (for debugging)
+  - apiGroups: [""]
+    resources: ["pods/log", "pods/exec"]
+    verbs: ["get", "list", "create"]
+
+---
+# QA Tester Role - Read access + testing capabilities
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: microservice-demo-staging
+  name: qa-tester
+  labels:
+    app.kubernetes.io/name: rbac
+    app.kubernetes.io/component: qa-role
+rules:
+  # Read access to most resources
+  - apiGroups: [""]
+    resources: ["pods", "services", "configmaps", "endpoints"]
+    verbs: ["get", "list", "watch"]
+  
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch"]
+  
+  # Limited secret access (only test-related)
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+    resourceNames: ["test-secrets", "qa-config"]
+  
+  # Access to logs for debugging
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+  
+  # Events for troubleshooting
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+  
+  # Monitoring access
+  - apiGroups: ["monitoring.coreos.com"]
+    resources: ["servicemonitors", "podmonitors"]
+    verbs: ["get", "list", "watch"]
+
+---
+# DevOps Engineer Role - Infrastructure and deployment management
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: devops-engineer
+  labels:
+    app.kubernetes.io/name: rbac
+    app.kubernetes.io/component: devops-role
+rules:
+  # Full access to deployments and infrastructure
+  - apiGroups: [""]
+    resources: ["*"]
+    verbs: ["*"]
+  
+  - apiGroups: ["apps"]
+    resources: ["*"]
+    verbs: ["*"]
+  
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["*"]
+    verbs: ["*"]
+  
+  # OpenShift specific resources
+  - apiGroups: ["route.openshift.io"]
+    resources: ["*"]
+    verbs: ["*"]
+  
+  - apiGroups: ["image.openshift.io"]
+    resources: ["*"]
+    verbs: ["*"]
+  
+  # Monitoring and observability
+  - apiGroups: ["monitoring.coreos.com"]
+    resources: ["*"]
+    verbs: ["*"]
+  
+  # RBAC management
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Custom Resource Definitions
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Cluster-level resources
+  - apiGroups: [""]
+    resources: ["nodes", "persistentvolumes", "namespaces"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+---
+# Site Reliability Engineer Role - Production monitoring and troubleshooting
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sre
+  labels:
+    app.kubernetes.io/name: rbac
+    app.kubernetes.io/component: sre-role
+rules:
+  # Read access to all resources for monitoring
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  
+  # Pod management for troubleshooting
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "delete"]
+  
+  # Pod exec and logs for debugging
+  - apiGroups: [""]
+    resources: ["pods/exec", "pods/log", "pods/portforward"]
+    verbs: ["get", "list", "create"]
+  
+  # Service and endpoint management
+  - apiGroups: [""]
+    resources: ["services", "endpoints"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  
+  # Deployment scaling and rollback
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/scale"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  
+  # HPA management
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  
+  # Monitoring resources management
+  - apiGroups: ["monitoring.coreos.com"]
+    resources: ["*"]
+    verbs: ["*"]
+  
+  # Events for incident response
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+  
+  # Emergency secret management
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+
+---
+# Security Auditor Role - Read-only access for compliance
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: security-auditor
+  labels:
+    app.kubernetes.io/name: rbac
+    app.kubernetes.io/component: auditor-role
+rules:
+  # Read-only access to all resources
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  
+  # Access to security-related resources
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  
+  - apiGroups: ["security.openshift.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  
+  # Network policies
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch"]
+  
+  # Pod Security Standards
+  - apiGroups: ["policy"]
+    resources: ["podsecuritypolicies"]
+    verbs: ["get", "list", "watch"]
+
+---
+# CI/CD Service Role - Automated deployment permissions
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cicd-service
+  labels:
+    app.kubernetes.io/name: rbac
+    app.kubernetes.io/component: cicd-role
+rules:
+  # Deployment resources
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Services and configuration
+  - apiGroups: [""]
+    resources: ["services", "configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Limited secret access (deployment secrets only)
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+    resourceNames: ["registry-credentials", "deployment-tokens"]
+  
+  # Routes for external access
+  - apiGroups: ["route.openshift.io"]
+    resources: ["routes"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Image streams for container management
+  - apiGroups: ["image.openshift.io"]
+    resources: ["imagestreams", "imagestreamtags"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  
+  # Build configs
+  - apiGroups: ["build.openshift.io"]
+    resources: ["buildconfigs", "builds"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Service monitors for observability
+  - apiGroups: ["monitoring.coreos.com"]
+    resources: ["servicemonitors"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Events for pipeline tracking
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+
+---
+# Read-Only Role - Basic viewing permissions
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: readonly-user
+  labels:
+    app.kubernetes.io/name: rbac
+    app.kubernetes.io/component: readonly-role
+rules:
+  # Basic read access to common resources
+  - apiGroups: [""]
+    resources: ["pods", "services", "configmaps", "endpoints", "events"]
+    verbs: ["get", "list", "watch"]
+  
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch"]
+  
+  # Routes and ingress
+  - apiGroups: ["route.openshift.io"]
+    resources: ["routes"]
+    verbs: ["get", "list", "watch"]
+  
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch"]
+  
+  # Monitoring dashboards
+  - apiGroups: ["monitoring.coreos.com"]
+    resources: ["servicemonitors", "podmonitors"]
+    verbs: ["get", "list", "watch"]
+  
+  # No access to secrets by default 

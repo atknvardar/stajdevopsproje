@@ -199,7 +199,8 @@ class TestEnvironmentConfiguration:
     
     def test_production_like_behavior(self, client, reset_state):
         """Test production-like behavior"""
-        with patch("app.config.settings.ENVIRONMENT", "production"):
+        # Properly mock the settings in the main module where it's imported
+        with patch("app.main.settings.ENVIRONMENT", "production"):
             response = client.get("/api/v1/status")
             data = response.json()
             assert data["environment"] == "production"

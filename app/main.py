@@ -14,9 +14,9 @@ import random
 import gc
 from datetime import datetime, timedelta
 
-from fastapi import FastAPI, Response, HTTPException
+from fastapi import FastAPI, Response, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST, CollectorRegistry, REGISTRY
 from opentelemetry import trace
 from opentelemetry.exporter.jaeger.thrift import JaegerExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -48,12 +48,33 @@ structlog.configure(
 
 logger = structlog.get_logger()
 
-# Prometheus metrics
-REQUEST_COUNT = Counter('http_requests_total', 'Total HTTP requests', ['method', 'endpoint', 'status'])
-REQUEST_DURATION = Histogram('http_request_duration_seconds', 'HTTP request duration')
-ACTIVE_REQUESTS = Gauge('http_requests_in_flight', 'Active HTTP requests')
-APPLICATION_READY = Gauge('application_ready', 'Application readiness status')
-APPLICATION_HEALTHY = Gauge('application_healthy', 'Application health status')
+# Prometheus metrics - Handle multiple registrations gracefully
+def create_or_get_metric(metric_class, name, description, labelnames=None, registry=REGISTRY):
+    """Create a metric or return existing one if already registered"""
+    try:
+        if labelnames:
+            return metric_class(name, description, labelnames, registry=registry)
+        else:
+            return metric_class(name, description, registry=registry)
+    except ValueError as e:
+        if "Duplicated timeseries" in str(e):
+            # Metric already exists, find and return it
+            for collector in registry._collector_to_names:
+                if hasattr(collector, '_name') and collector._name == name:
+                    return collector
+            # If not found, create with a new registry for tests
+            test_registry = CollectorRegistry()
+            if labelnames:
+                return metric_class(name, description, labelnames, registry=test_registry)
+            else:
+                return metric_class(name, description, registry=test_registry)
+        raise
+
+REQUEST_COUNT = create_or_get_metric(Counter, 'http_requests_total', 'Total HTTP requests', ['method', 'endpoint', 'status'])
+REQUEST_DURATION = create_or_get_metric(Histogram, 'http_request_duration_seconds', 'HTTP request duration')
+ACTIVE_REQUESTS = create_or_get_metric(Gauge, 'http_requests_in_flight', 'Active HTTP requests')
+APPLICATION_READY = create_or_get_metric(Gauge, 'application_ready', 'Application readiness status')
+APPLICATION_HEALTHY = create_or_get_metric(Gauge, 'application_healthy', 'Application health status')
 
 # Application state
 app_state = {
@@ -74,9 +95,9 @@ chaos_state = {
 }
 
 # Chaos Engineering Metrics
-chaos_events_counter = Counter('chaos_events_total', 'Total number of chaos events', ['chaos_type', 'event_type'])
-chaos_healing_counter = Counter('chaos_healing_total', 'Total number of healing events', ['chaos_type', 'source'])
-chaos_memory_usage = Gauge('chaos_memory_usage_mb', 'Current memory usage from chaos scenarios')
+chaos_events_counter = create_or_get_metric(Counter, 'chaos_events_total', 'Total number of chaos events', ['chaos_type', 'event_type'])
+chaos_healing_counter = create_or_get_metric(Counter, 'chaos_healing_total', 'Total number of healing events', ['chaos_type', 'source'])
+chaos_memory_usage = create_or_get_metric(Gauge, 'chaos_memory_usage_mb', 'Current memory usage from chaos scenarios')
 healing_reports_storage = []
 
 def setup_tracing():

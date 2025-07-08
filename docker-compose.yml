@@ -1,55 +1,62 @@
 version: '3.8'
 
 services:
-  # Main application
+  # Microservice Application
   microservice:
-    build:
+    build: 
       context: .
       dockerfile: build/Dockerfile
-      target: runtime
-      args:
-        BUILD_DATE: "2024-01-01T00:00:00Z"
-        VERSION: "1.0.0-dev"
-        COMMIT_HASH: "dev"
     ports:
       - "8080:8080"
     environment:
       - PORT=8080
-      - LOG_LEVEL=DEBUG
       - ENVIRONMENT=development
+      - LOG_LEVEL=INFO
       - METRICS_ENABLED=true
       - TRACING_ENABLED=true
       - JAEGER_ENDPOINT=jaeger
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+    networks:
+      - monitoring
     depends_on:
+      - prometheus
       - jaeger
-    networks:
-      - microservice-net
+    labels:
+      - "prometheus.scrape=true"
+      - "prometheus.port=8080"
+      - "prometheus.path=/metrics"
 
-  # Jaeger for distributed tracing
-  jaeger:
-    image: jaegertracing/all-in-one:1.51
+  # n8n Workflow Automation
+  n8n:
+    image: n8nio/n8n:1.19.4
     ports:
-      - "16686:16686"  # Jaeger UI
-      - "14268:14268"  # HTTP collector
-      - "6831:6831/udp"  # UDP collector
+      - "5678:5678"
     environment:
-      - COLLECTOR_OTLP_ENABLED=true
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=admin123
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5678/
+      - N8N_ENCRYPTION_KEY=supersecretkey
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./automation/n8n-workflows:/home/node/.n8n/workflows
+      - ./automation/scripts:/scripts
     networks:
-      - microservice-net
+      - monitoring
+    labels:
+      - "traefik.enable=false"
 
-  # Prometheus for metrics collection
+  # Prometheus Monitoring
   prometheus:
-    image: prom/prometheus:v2.47.2
+    image: prom/prometheus:v2.45.0
     ports:
       - "9090:9090"
     volumes:
-      - ./build/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./observability/prometheus/prometheus.yaml:/etc/prometheus/prometheus.yml
+      - ./observability/prometheus/rules:/etc/prometheus/rules
+      - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
@@ -57,30 +64,61 @@ services:
       - '--web.console.templates=/etc/prometheus/consoles'
       - '--storage.tsdb.retention.time=200h'
       - '--web.enable-lifecycle'
+      - '--rule-files=/etc/prometheus/rules/*.yml'
+      - '--web.enable-admin-api'
     networks:
-      - microservice-net
-    depends_on:
-      - microservice
+      - monitoring
 
-  # Grafana for visualization
+  # Alertmanager for Alerts
+  alertmanager:
+    image: prom/alertmanager:v0.25.0
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./observability/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      - alertmanager_data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+      - '--web.external-url=http://localhost:9093'
+    networks:
+      - monitoring
+
+  # Grafana Dashboards
   grafana:
-    image: grafana/grafana:10.2.0
+    image: grafana/grafana:10.1.0
     ports:
       - "3000:3000"
     environment:
+      - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+      - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
-      - grafana-storage:/var/lib/grafana
-      - ./build/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml
+      - ./observability/grafana/grafana.ini:/etc/grafana/grafana.ini
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning
+      - grafana_data:/var/lib/grafana
     networks:
-      - microservice-net
+      - monitoring
     depends_on:
       - prometheus
 
+  # Jaeger Tracing
+  jaeger:
+    image: jaegertracing/all-in-one:1.49
+    ports:
+      - "16686:16686"
+      - "6831:6831/udp"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    networks:
+      - monitoring
+
 volumes:
-  grafana-storage:
+  prometheus_data:
+  grafana_data:
+  alertmanager_data:
+  n8n_data:
 
 networks:
-  microservice-net:
+  monitoring:
     driver: bridge 

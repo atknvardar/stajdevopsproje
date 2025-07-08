@@ -1,7 +1,7 @@
 global:
   # Global SMTP configuration
-  smtp_smarthost: 'smtp.company.com:587'
-  smtp_from: 'alerts@company.com'
+  smtp_smarthost: 'localhost:587'
+  smtp_from: 'alertmanager@example.com'
   smtp_auth_username: 'alerts@company.com'
   smtp_auth_password: 'your-smtp-password'
   smtp_require_tls: true
@@ -15,209 +15,92 @@ templates:
 
 # Alert routing configuration
 route:
-  group_by: ['alertname', 'cluster', 'service']
+  group_by: ['alertname']
   group_wait: 10s
   group_interval: 10s
   repeat_interval: 1h
   receiver: 'web.hook'
   
   routes:
-    # Critical alerts - immediate notification
+    # Chaos Engineering Alerts - Send to n8n for automated healing
     - match:
-        severity: critical
-      receiver: 'critical-alerts'
+        alert_type: error_rate
+      receiver: 'chaos-healing-webhook'
       group_wait: 5s
-      group_interval: 5s
-      repeat_interval: 15m
-      routes:
-        # Critical infrastructure alerts
-        - match:
-            component: infrastructure
-          receiver: 'infrastructure-critical'
-        # Critical application alerts
-        - match:
-            component: availability
-          receiver: 'application-critical'
-        # Critical performance alerts
-        - match:
-            component: performance
-          receiver: 'performance-critical'
-
-    # Warning alerts - regular notification
-    - match:
-        severity: warning
-      receiver: 'warning-alerts'
-      group_wait: 30s
-      group_interval: 5m
-      repeat_interval: 2h
-      routes:
-        # Resource warnings
-        - match:
-            component: resources
-          receiver: 'resource-warnings'
-        # Performance warnings
-        - match:
-            component: performance
-          receiver: 'performance-warnings'
-
-    # Development environment - reduced noise
-    - match:
-        namespace: microservice-demo-dev
-      receiver: 'dev-alerts'
-      group_interval: 10m
-      repeat_interval: 6h
-
-    # Staging environment - moderate alerting
-    - match:
-        namespace: microservice-demo-staging
-      receiver: 'staging-alerts'
-      group_interval: 5m
-      repeat_interval: 2h
-
-    # Production environment - immediate alerting
-    - match:
-        namespace: microservice-demo-prod
-      receiver: 'production-alerts'
-      group_wait: 5s
-      group_interval: 30s
       repeat_interval: 30m
+    
+    - match:
+        alert_type: latency  
+      receiver: 'chaos-healing-webhook'
+      group_wait: 5s
+      repeat_interval: 30m
+      
+    - match:
+        alert_type: memory
+      receiver: 'chaos-healing-webhook'
+      group_wait: 10s
+      repeat_interval: 15m
+      
+    - match:
+        alert_type: cpu
+      receiver: 'chaos-healing-webhook'
+      group_wait: 5s
+      repeat_interval: 30m
+      
+    - match:
+        alert_type: chaos_detected
+      receiver: 'chaos-healing-webhook'
+      group_wait: 0s
+      repeat_interval: 5m
 
 # Alert receivers and notification methods
 receivers:
   # Default webhook receiver
   - name: 'web.hook'
     webhook_configs:
-      - url: 'http://webhook-receiver:8080/alerts'
-        send_resolved: true
+      - url: 'http://localhost:9093/api/v1/alerts'
 
-  # Critical alerts - multiple channels
-  - name: 'critical-alerts'
-    email_configs:
-      - to: 'oncall@company.com'
-        subject: '🚨 CRITICAL: {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
-        body: |
-          {{ range .Alerts }}
-          **Alert:** {{ .Annotations.summary }}
-          **Description:** {{ .Annotations.description }}
-          **Severity:** {{ .Labels.severity }}
-          **Component:** {{ .Labels.component }}
-          **Instance:** {{ .Labels.instance }}
-          **Time:** {{ .StartsAt.Format "2006-01-02 15:04:05" }}
-          {{ if .Annotations.runbook_url }}**Runbook:** {{ .Annotations.runbook_url }}{{ end }}
-          {{ end }}
-        html: |
-          <h2>🚨 Critical Alert</h2>
-          {{ range .Alerts }}
-          <div style="border: 2px solid red; padding: 10px; margin: 10px;">
-            <h3>{{ .Annotations.summary }}</h3>
-            <p><strong>Description:</strong> {{ .Annotations.description }}</p>
-            <p><strong>Severity:</strong> {{ .Labels.severity }}</p>
-            <p><strong>Component:</strong> {{ .Labels.component }}</p>
-            <p><strong>Instance:</strong> {{ .Labels.instance }}</p>
-            <p><strong>Time:</strong> {{ .StartsAt.Format "2006-01-02 15:04:05" }}</p>
-            {{ if .Annotations.runbook_url }}<p><a href="{{ .Annotations.runbook_url }}">📖 Runbook</a></p>{{ end }}
-          </div>
-          {{ end }}
-    slack_configs:
-      - channel: '#alerts-critical'
-        title: '🚨 Critical Alert'
+  # n8n Chaos Healing Webhook
+  - name: 'chaos-healing-webhook'
+    webhook_configs:
+      - url: 'http://n8n:5678/webhook/chaos-alert'
+        send_resolved: true
+        http_config:
+          tls_config:
+            insecure_skip_verify: true
+        title: 'Chaos Engineering Alert - {{ .GroupLabels.alertname }}'
         text: |
-          {{ range .Alerts }}
-          *{{ .Annotations.summary }}*
-          {{ .Annotations.description }}
+          🚨 CHAOS ALERT DETECTED 🚨
           
-          *Severity:* {{ .Labels.severity }}
-          *Component:* {{ .Labels.component }}
-          *Instance:* {{ .Labels.instance }}
-          {{ if .Annotations.runbook_url }}*Runbook:* {{ .Annotations.runbook_url }}{{ end }}
-          {{ end }}
-        color: 'danger'
-        send_resolved: true
-
-  # Infrastructure critical alerts
-  - name: 'infrastructure-critical'
-    email_configs:
-      - to: 'infrastructure@company.com'
-        subject: '🏗️ INFRASTRUCTURE CRITICAL: {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
-    slack_configs:
-      - channel: '#infrastructure-alerts'
-        title: '🏗️ Infrastructure Critical'
-        color: 'danger'
-
-  # Application critical alerts
-  - name: 'application-critical'
-    email_configs:
-      - to: 'devops@company.com, developers@company.com'
-        subject: '💥 APPLICATION CRITICAL: {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
-    slack_configs:
-      - channel: '#app-alerts'
-        title: '💥 Application Critical'
-        color: 'danger'
-
-  # Performance critical alerts
-  - name: 'performance-critical'
-    email_configs:
-      - to: 'performance@company.com'
-        subject: '⚡ PERFORMANCE CRITICAL: {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
-    slack_configs:
-      - channel: '#performance-alerts'
-        title: '⚡ Performance Critical'
-        color: 'danger'
-
-  # Warning alerts
-  - name: 'warning-alerts'
-    slack_configs:
-      - channel: '#alerts-warning'
-        title: '⚠️ Warning Alert'
-        text: |
-          {{ range .Alerts }}
-          *{{ .Annotations.summary }}*
-          {{ .Annotations.description }}
+          Alert: {{ .GroupLabels.alertname }}
+          Severity: {{ .GroupLabels.severity }}
+          Service: {{ .GroupLabels.service }}
+          Type: {{ .GroupLabels.alert_type }}
           
-          *Severity:* {{ .Labels.severity }}
-          *Component:* {{ .Labels.component }}
+          {{ range .Alerts }}
+          Summary: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Chaos Type: {{ .Annotations.chaos_type }}
+          Time: {{ .StartsAt }}
           {{ end }}
-        color: 'warning'
+          
+          🔧 Automated healing workflow triggered via n8n
+        
+      # Backup webhook for logging
+      - url: 'http://microservice:8080/admin/alert-received'
         send_resolved: true
-
-  # Resource warnings
-  - name: 'resource-warnings'
-    slack_configs:
-      - channel: '#resource-alerts'
-        title: '📊 Resource Warning'
-        color: 'warning'
-
-  # Performance warnings
-  - name: 'performance-warnings'
-    slack_configs:
-      - channel: '#performance-alerts'
-        title: '⏱️ Performance Warning'
-        color: 'warning'
-
-  # Environment-specific receivers
-  - name: 'dev-alerts'
-    slack_configs:
-      - channel: '#dev-alerts'
-        title: '🔧 Development Alert'
-        color: 'good'
-
-  - name: 'staging-alerts'
-    slack_configs:
-      - channel: '#staging-alerts'
-        title: '🧪 Staging Alert'
-        color: 'warning'
-
-  - name: 'production-alerts'
-    email_configs:
-      - to: 'production-oncall@company.com'
-        subject: '🔥 PRODUCTION: {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
-    slack_configs:
-      - channel: '#production-alerts'
-        title: '🔥 Production Alert'
-        color: 'danger'
+        http_config:
+          tls_config:
+            insecure_skip_verify: true
 
 # Inhibition rules - suppress redundant alerts
 inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'dev', 'instance']
+
   # If a service is down, don't alert on high error rate
   - source_match:
       alertname: 'MicroserviceDown'

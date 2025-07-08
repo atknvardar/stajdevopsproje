@@ -264,4 +264,90 @@ groups:
           )
 
       - record: sli:microservice_demo_throughput_5m
-        expr: rate(http_requests_total{job="microservice-demo"}[5m]) 
+        expr: rate(http_requests_total{job="microservice-demo"}[5m])
+
+  - name: microservice-alerts
+    rules:
+      # High Error Rate Alert
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.1
+        for: 1m
+        labels:
+          severity: critical
+          service: microservice
+          alert_type: error_rate
+        annotations:
+          summary: "High error rate detected in microservice"
+          description: "Error rate is {{ $value }} errors per second for the last 5 minutes"
+          n8n_webhook: "http://localhost:5678/webhook/chaos-alert"
+          chaos_type: "error_injection"
+
+      # High Response Time Alert  
+      - alert: HighResponseTime
+        expr: rate(http_request_duration_seconds_sum[5m]) / rate(http_request_duration_seconds_count[5m]) > 2
+        for: 1m
+        labels:
+          severity: warning
+          service: microservice
+          alert_type: latency
+        annotations:
+          summary: "High response time detected in microservice"
+          description: "Average response time is {{ $value }}s over the last 5 minutes"
+          n8n_webhook: "http://localhost:5678/webhook/chaos-alert"
+          chaos_type: "slow_responses"
+
+      # High Memory Usage Alert
+      - alert: HighMemoryUsage
+        expr: process_resident_memory_bytes > 200000000  # 200MB
+        for: 2m
+        labels:
+          severity: warning
+          service: microservice
+          alert_type: memory
+        annotations:
+          summary: "High memory usage detected in microservice"
+          description: "Memory usage is {{ $value | humanize1024 }}B"
+          n8n_webhook: "http://localhost:5678/webhook/chaos-alert"
+          chaos_type: "memory_leak"
+
+      # High CPU Usage Alert
+      - alert: HighCPUUsage
+        expr: rate(process_cpu_seconds_total[5m]) > 0.8
+        for: 1m
+        labels:
+          severity: warning
+          service: microservice
+          alert_type: cpu
+        annotations:
+          summary: "High CPU usage detected in microservice"
+          description: "CPU usage is {{ $value }}% over the last 5 minutes"
+          n8n_webhook: "http://localhost:5678/webhook/chaos-alert"
+          chaos_type: "cpu_spike"
+
+      # Service Down Alert
+      - alert: ServiceDown
+        expr: up{job="microservice"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: microservice
+          alert_type: availability
+        annotations:
+          summary: "Microservice is down"
+          description: "Microservice has been down for more than 1 minute"
+          n8n_webhook: "http://localhost:5678/webhook/chaos-alert"
+          chaos_type: "service_down"
+
+      # Chaos Engineering Alert - Detects active chaos
+      - alert: ChaosActive
+        expr: increase(chaos_events_total[1m]) > 0
+        for: 0m  # Alert immediately
+        labels:
+          severity: info
+          service: microservice
+          alert_type: chaos_detected
+        annotations:
+          summary: "Chaos engineering scenario detected"
+          description: "Active chaos detected: {{ $labels.chaos_type }}"
+          n8n_webhook: "http://localhost:5678/webhook/chaos-alert"
+          action: "start_healing_workflow" 

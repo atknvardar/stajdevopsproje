@@ -1,0 +1,252 @@
+{
+  "name": "🔧 Chaos Engineering Auto-Healing Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "chaos-alert",
+        "options": {}
+      },
+      "id": "1f1e1c48-4e47-46f2-9d1a-2b5e5a6f7c8d",
+      "name": "🚨 Webhook - Chaos Alert",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "chaos-alert"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse the incoming alert from Prometheus\nconst alertData = $input.first().json;\n\nconsole.log('🚨 Received Chaos Alert:', JSON.stringify(alertData, null, 2));\n\n// Extract relevant information\nconst chaosType = alertData.alerts?.[0]?.annotations?.chaos_type || 'unknown';\nconst severity = alertData.alerts?.[0]?.labels?.severity || 'unknown';\nconst alertType = alertData.alerts?.[0]?.labels?.alert_type || 'unknown';\nconst summary = alertData.alerts?.[0]?.annotations?.summary || 'No summary';\nconst description = alertData.alerts?.[0]?.annotations?.description || 'No description';\n\n// Create structured data for the healing workflow\nconst healingContext = {\n  timestamp: new Date().toISOString(),\n  chaos_type: chaosType,\n  severity: severity,\n  alert_type: alertType,\n  summary: summary,\n  description: description,\n  service_url: 'http://microservice:8080',\n  healing_needed: true,\n  investigation_prompt: `CHAOS ENGINEERING ALERT DETECTED:\n\nType: ${chaosType}\nSeverity: ${severity}\nAlert: ${alertType}\nSummary: ${summary}\nDescription: ${description}\n\nPlease analyze the microservice code and provide a solution to fix this issue. Focus on the chaos engineering scenario and provide specific code fixes.`\n};\n\nconsole.log('🔧 Healing Context Created:', JSON.stringify(healingContext, null, 2));\n\nreturn { json: healingContext };"
+      },
+      "id": "2a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d",
+      "name": "📊 Parse Alert Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://microservice:8080/admin/chaos/status",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "3b3c4d5e-6f7a-8b9c-0d1e-2f3a4b5c6d7e",
+      "name": "🔍 Check Service Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Analyze the service status and determine healing strategy\nconst alertContext = $input.first().json;\nconst statusData = $input.last().json;\n\nconsole.log('🔍 Service Status:', JSON.stringify(statusData, null, 2));\n\n// Determine healing strategy based on chaos type and current status\nlet healingStrategy = {\n  chaos_type: alertContext.chaos_type,\n  active_chaos: statusData.active_chaos || [],\n  immediate_action_needed: false,\n  cursor_analysis_needed: true,\n  healing_endpoints: [],\n  investigation_focus: ''\n};\n\n// Define healing strategies for different chaos types\nswitch (alertContext.chaos_type) {\n  case 'memory_leak':\n    healingStrategy.healing_endpoints = ['/admin/chaos/heal'];\n    healingStrategy.investigation_focus = 'Memory management and garbage collection issues';\n    healingStrategy.immediate_action_needed = statusData.system_impact?.estimated_memory_usage_mb > 50;\n    break;\n    \n  case 'slow_responses':\n    healingStrategy.healing_endpoints = ['/admin/chaos/heal'];\n    healingStrategy.investigation_focus = 'Performance bottlenecks and response time optimization';\n    healingStrategy.immediate_action_needed = true;\n    break;\n    \n  case 'error_injection':\n    healingStrategy.healing_endpoints = ['/admin/chaos/heal'];\n    healingStrategy.investigation_focus = 'Error handling and resilience patterns';\n    healingStrategy.immediate_action_needed = true;\n    break;\n    \n  case 'cpu_spike':\n    healingStrategy.healing_endpoints = ['/admin/chaos/heal'];\n    healingStrategy.investigation_focus = 'CPU optimization and resource management';\n    healingStrategy.immediate_action_needed = statusData.system_impact?.performance_degraded;\n    break;\n    \n  default:\n    healingStrategy.investigation_focus = 'General system health and stability';\n    healingStrategy.immediate_action_needed = true;\n}\n\n// Create Cursor AI prompt\nconst cursorPrompt = `🔧 CHAOS ENGINEERING HEALING REQUEST\n\nALERT DETAILS:\n- Type: ${alertContext.chaos_type}\n- Severity: ${alertContext.severity}\n- Summary: ${alertContext.summary}\n- Description: ${alertContext.description}\n\nCURRENT SYSTEM STATE:\n- Active Chaos: ${JSON.stringify(statusData.active_chaos)}\n- Memory Usage: ${statusData.system_impact?.estimated_memory_usage_mb || 0}MB\n- Performance Degraded: ${statusData.system_impact?.performance_degraded || false}\n\nINVESTIGATION FOCUS:\n${healingStrategy.investigation_focus}\n\nPLEASE ANALYZE AND PROVIDE:\n1. Root cause analysis\n2. Specific code fixes needed\n3. Prevention strategies\n4. Testing recommendations\n\nCODE REPOSITORY: /Users/atakanvardar/Desktop/stajdevopsproje\nMAIN APPLICATION: app/main.py\n\nPlease inspect the code and provide actionable solutions.`;\n\nconst result = {\n  ...alertContext,\n  healing_strategy: healingStrategy,\n  cursor_prompt: cursorPrompt,\n  service_status: statusData\n};\n\nconsole.log('🎯 Healing Strategy:', JSON.stringify(result, null, 2));\n\nreturn { json: result };"
+      },
+      "id": "4c4d5e6f-7a8b-9c0d-1e2f-3a4b5c6d7e8f",
+      "name": "🎯 Determine Healing Strategy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "command": "/scripts/cursor-analyze.sh",
+        "parameters": {
+          "chaos_type": "={{ $json.chaos_type }}",
+          "prompt": "={{ $json.cursor_prompt }}",
+          "repository_path": "/Users/atakanvardar/Desktop/stajdevopsproje"
+        }
+      },
+      "id": "5d5e6f7a-8b9c-0d1e-2f3a-4b5c6d7e8f9a",
+      "name": "🧠 Cursor AI Analysis",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Cursor AI response and prepare healing actions\nconst workflowData = $input.first().json;\nconst cursorResponse = $input.last().json;\n\nconsole.log('🧠 Cursor AI Response:', cursorResponse);\n\n// Extract healing actions from Cursor response\nlet healingActions = {\n  immediate_heal: workflowData.healing_strategy.immediate_action_needed,\n  cursor_suggestions: cursorResponse.stdout || 'No suggestions received',\n  healing_endpoints: workflowData.healing_strategy.healing_endpoints,\n  test_endpoints: [\n    '/healthz',\n    '/ready', \n    '/api/v1/hello',\n    '/metrics'\n  ],\n  validation_needed: true\n};\n\n// Parse Cursor suggestions if they contain structured data\ntry {\n  const suggestions = JSON.parse(cursorResponse.stdout);\n  if (suggestions.healing_actions) {\n    healingActions = { ...healingActions, ...suggestions.healing_actions };\n  }\n} catch (e) {\n  console.log('Cursor response is not JSON, treating as text');\n}\n\nconst result = {\n  ...workflowData,\n  healing_actions: healingActions,\n  cursor_analysis: cursorResponse\n};\n\nconsole.log('🔧 Healing Actions Prepared:', JSON.stringify(result, null, 2));\n\nreturn { json: result };"
+      },
+      "id": "6e6f7a8b-9c0d-1e2f-3a4b-5c6d7e8f9a0b",
+      "name": "🔧 Prepare Healing Actions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://microservice:8080/admin/chaos/heal",
+        "options": {
+          "timeout": 30000
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "healing_source",
+              "value": "n8n_workflow"
+            },
+            {
+              "name": "chaos_type",
+              "value": "={{ $json.chaos_type }}"
+            }
+          ]
+        }
+      },
+      "id": "7f7a8b9c-0d1e-2f3a-4b5c-6d7e8f9a0b1c",
+      "name": "✅ Execute Healing",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://microservice:8080{{ $json.test_endpoint }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "8a8b9c0d-1e2f-3a4b-5c6d-7e8f9a0b1c2d",
+      "name": "🧪 Test Service Health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate healing success and prepare final report\nconst workflowData = $input.first().json;\nconst healingResponse = $input.all()[1].json;\nconst testResults = $input.all().slice(2); // All test results\n\nconsole.log('✅ Healing Response:', JSON.stringify(healingResponse, null, 2));\nconsole.log('🧪 Test Results:', JSON.stringify(testResults, null, 2));\n\n// Analyze test results\nlet testsPassedCount = 0;\nlet testResults_detailed = [];\n\ntestResults.forEach((result, index) => {\n  const testPassed = result.json && result.json.status !== 'error';\n  testsPassedCount += testPassed ? 1 : 0;\n  \n  testResults_detailed.push({\n    endpoint: workflowData.healing_actions.test_endpoints[index] || `test_${index}`,\n    status: testPassed ? 'passed' : 'failed',\n    response: result.json\n  });\n});\n\nconst healingSuccess = testsPassedCount >= Math.ceil(testResults.length * 0.8); // 80% success rate\n\n// Create final report\nconst finalReport = {\n  workflow_id: Date.now().toString(),\n  timestamp: new Date().toISOString(),\n  original_alert: {\n    chaos_type: workflowData.chaos_type,\n    severity: workflowData.severity,\n    summary: workflowData.summary\n  },\n  healing_performed: {\n    actions_taken: healingResponse.actions_taken || [],\n    healing_endpoint_called: true,\n    immediate_heal_executed: workflowData.healing_actions.immediate_heal\n  },\n  cursor_analysis: {\n    suggestions_received: workflowData.cursor_analysis.stdout ? true : false,\n    analysis_summary: workflowData.healing_actions.cursor_suggestions.substring(0, 200) + '...'\n  },\n  validation_results: {\n    tests_total: testResults.length,\n    tests_passed: testsPassedCount,\n    tests_failed: testResults.length - testsPassedCount,\n    success_rate: (testsPassedCount / testResults.length * 100).toFixed(1) + '%',\n    detailed_results: testResults_detailed\n  },\n  overall_status: healingSuccess ? 'success' : 'partial_success',\n  recommendations: healingSuccess ? \n    'System successfully healed and all tests passing' : \n    'Partial healing - manual intervention may be required'\n};\n\nconsole.log('📊 Final Healing Report:', JSON.stringify(finalReport, null, 2));\n\nreturn { json: finalReport };"
+      },
+      "id": "9b9c0d1e-2f3a-4b5c-6d7e-8f9a0b1c2d3e",
+      "name": "📊 Generate Healing Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://microservice:8080/admin/healing-report",
+        "options": {
+          "timeout": 10000
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify($json) }}"
+      },
+      "id": "0c0d1e2f-3a4b-5c6d-7e8f-9a0b1c2d3e4f",
+      "name": "📤 Store Healing Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2220, 300]
+    }
+  ],
+  "connections": {
+    "🚨 Webhook - Chaos Alert": {
+      "main": [
+        [
+          {
+            "node": "📊 Parse Alert Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Parse Alert Data": {
+      "main": [
+        [
+          {
+            "node": "🔍 Check Service Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Check Service Status": {
+      "main": [
+        [
+          {
+            "node": "🎯 Determine Healing Strategy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🎯 Determine Healing Strategy": {
+      "main": [
+        [
+          {
+            "node": "🧠 Cursor AI Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧠 Cursor AI Analysis": {
+      "main": [
+        [
+          {
+            "node": "🔧 Prepare Healing Actions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔧 Prepare Healing Actions": {
+      "main": [
+        [
+          {
+            "node": "✅ Execute Healing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✅ Execute Healing": {
+      "main": [
+        [
+          {
+            "node": "🧪 Test Service Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧪 Test Service Health": {
+      "main": [
+        [
+          {
+            "node": "📊 Generate Healing Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Generate Healing Report": {
+      "main": [
+        [
+          {
+            "node": "📤 Store Healing Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "id": "chaos-healing-workflow",
+  "tags": ["chaos-engineering", "automation", "healing", "cursor-ai"]
+} 

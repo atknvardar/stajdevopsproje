@@ -6,8 +6,13 @@ import asyncio
 import logging
 import os
 import time
+import math
 from contextlib import asynccontextmanager
 from typing import Dict, Any
+import threading
+import random
+import gc
+from datetime import datetime, timedelta
 
 from fastapi import FastAPI, Response, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -57,6 +62,22 @@ app_state = {
     "healthy": True,
     "version": "1.0.0"
 }
+
+# Chaos Engineering State
+chaos_state = {
+    "memory_leak_active": False,
+    "slow_responses_active": False,
+    "error_injection_active": False,
+    "cpu_spike_active": False,
+    "memory_objects": [],
+    "chaos_history": []
+}
+
+# Chaos Engineering Metrics
+chaos_events_counter = Counter('chaos_events_total', 'Total number of chaos events', ['chaos_type', 'event_type'])
+chaos_healing_counter = Counter('chaos_healing_total', 'Total number of healing events', ['chaos_type', 'source'])
+chaos_memory_usage = Gauge('chaos_memory_usage_mb', 'Current memory usage from chaos scenarios')
+healing_reports_storage = []
 
 def setup_tracing():
     """Configure OpenTelemetry tracing"""
@@ -225,6 +246,161 @@ async def toggle_health():
     
     return {"healthy": app_state["healthy"]}
 
+@app.post("/admin/chaos/inject", tags=["chaos"])
+async def inject_chaos(chaos_type: str = "random"):
+    """
+    🔴 CHAOS ENGINEERING: Inject problems into the system
+    
+    Available chaos types:
+    - memory_leak: Gradual memory consumption increase
+    - slow_responses: Artificial delays in responses  
+    - error_injection: Random 500 errors
+    - cpu_spike: High CPU usage burst
+    - random: Randomly select one of the above
+    """
+    if not app_state["healthy"]:
+        raise HTTPException(status_code=503, detail="Service unhealthy, chaos injection disabled")
+    
+    if chaos_type == "random":
+        chaos_type = random.choice(["memory_leak", "slow_responses", "error_injection", "cpu_spike"])
+    
+    result = {"chaos_type": chaos_type, "status": "activated", "timestamp": datetime.now().isoformat()}
+    
+    if chaos_type == "memory_leak":
+        if not chaos_state["memory_leak_active"]:
+            chaos_state["memory_leak_active"] = True
+            threading.Thread(target=memory_leak_thread, daemon=True).start()
+            log_chaos_event("memory_leak", "Memory leak injection started")
+            result["details"] = "Memory leak started - will consume ~1MB/second"
+        else:
+            result["status"] = "already_active"
+            
+    elif chaos_type == "slow_responses":
+        chaos_state["slow_responses_active"] = True
+        log_chaos_event("slow_responses", "Slow response injection activated")
+        result["details"] = "Response delays activated - 2-5 second delays"
+        
+    elif chaos_type == "error_injection":
+        chaos_state["error_injection_active"] = True
+        log_chaos_event("error_injection", "Error injection activated")
+        result["details"] = "Random 500 errors activated - 30% failure rate"
+        
+    elif chaos_type == "cpu_spike":
+        if not chaos_state["cpu_spike_active"]:
+            chaos_state["cpu_spike_active"] = True
+            threading.Thread(target=cpu_spike_thread, daemon=True).start()
+            log_chaos_event("cpu_spike", "CPU spike injection started")
+            result["details"] = "CPU spike started - 30 seconds of high CPU usage"
+        else:
+            result["status"] = "already_active"
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown chaos type: {chaos_type}")
+    
+    return result
+
+@app.post("/admin/chaos/heal", tags=["chaos"])
+async def heal_chaos():
+    """
+    ✅ CHAOS HEALING: Stop all chaos engineering problems
+    """
+    healing_actions = []
+    
+    if chaos_state["memory_leak_active"]:
+        chaos_state["memory_leak_active"] = False
+        chaos_state["memory_objects"].clear()
+        gc.collect()  # Force garbage collection
+        healing_actions.append("memory_leak_stopped")
+        log_chaos_event("healing", "Memory leak stopped and memory cleared")
+    
+    if chaos_state["slow_responses_active"]:
+        chaos_state["slow_responses_active"] = False
+        healing_actions.append("slow_responses_stopped")
+        log_chaos_event("healing", "Slow responses disabled")
+    
+    if chaos_state["error_injection_active"]:
+        chaos_state["error_injection_active"] = False
+        healing_actions.append("error_injection_stopped")
+        log_chaos_event("healing", "Error injection disabled")
+    
+    if chaos_state["cpu_spike_active"]:
+        chaos_state["cpu_spike_active"] = False
+        healing_actions.append("cpu_spike_stopped")
+        log_chaos_event("healing", "CPU spike stopped")
+    
+    return {
+        "status": "healed",
+        "actions_taken": healing_actions,
+        "timestamp": datetime.now().isoformat(),
+        "message": "All chaos scenarios stopped"
+    }
+
+@app.get("/admin/chaos/status", tags=["chaos"])
+async def chaos_status():
+    """
+    📊 Get current chaos engineering status
+    """
+    active_chaos = []
+    if chaos_state["memory_leak_active"]:
+        active_chaos.append("memory_leak")
+    if chaos_state["slow_responses_active"]:
+        active_chaos.append("slow_responses")
+    if chaos_state["error_injection_active"]:
+        active_chaos.append("error_injection")
+    if chaos_state["cpu_spike_active"]:
+        active_chaos.append("cpu_spike")
+    
+    return {
+        "active_chaos": active_chaos,
+        "chaos_count": len(active_chaos),
+        "memory_objects_count": len(chaos_state["memory_objects"]),
+        "recent_events": chaos_state["chaos_history"][-10:],  # Last 10 events
+        "system_impact": {
+            "any_chaos_active": len(active_chaos) > 0,
+            "estimated_memory_usage_mb": len(chaos_state["memory_objects"]),
+            "performance_degraded": chaos_state["slow_responses_active"] or chaos_state["cpu_spike_active"]
+        }
+    }
+
+@app.post("/admin/healing-report", tags=["chaos"])
+async def store_healing_report(report: dict):
+    """
+    📤 Store healing report from n8n workflow
+    """
+    report["stored_at"] = datetime.now().isoformat()
+    healing_reports_storage.append(report)
+    
+    # Keep only last 100 reports
+    if len(healing_reports_storage) > 100:
+        healing_reports_storage[:] = healing_reports_storage[-100:]
+    
+    # Update metrics
+    chaos_type = report.get("original_alert", {}).get("chaos_type", "unknown")
+    chaos_healing_counter.labels(chaos_type=chaos_type, source="n8n_workflow").inc()
+    
+    log_chaos_event("healing_report", f"Stored healing report for {chaos_type}")
+    
+    return {
+        "status": "stored",
+        "report_id": report.get("workflow_id"),
+        "chaos_type": chaos_type,
+        "timestamp": report["stored_at"]
+    }
+
+@app.get("/admin/healing-reports", tags=["chaos"])
+async def get_healing_reports():
+    """
+    📊 Get all stored healing reports
+    """
+    return {
+        "total_reports": len(healing_reports_storage),
+        "reports": healing_reports_storage[-10:],  # Last 10 reports
+        "summary": {
+            "successful_healings": len([r for r in healing_reports_storage if r.get("overall_status") == "success"]),
+            "partial_healings": len([r for r in healing_reports_storage if r.get("overall_status") == "partial_success"]),
+            "failed_healings": len([r for r in healing_reports_storage if r.get("overall_status") == "failed"])
+        }
+    }
+
 @app.get("/", tags=["Root"])
 async def root():
     """Root endpoint"""
@@ -239,6 +415,66 @@ async def root():
             "docs": "/docs"
         }
     }
+
+# Add chaos middleware to inject problems into responses
+@app.middleware("http")
+async def chaos_middleware(request: Request, call_next):
+    """Middleware to inject chaos into responses"""
+    
+    # Skip chaos for admin and monitoring endpoints
+    if request.url.path.startswith(("/admin", "/healthz", "/ready", "/metrics")):
+        response = await call_next(request)
+        return response
+    
+    # Error injection chaos
+    if chaos_state["error_injection_active"] and random.random() < 0.3:  # 30% chance
+        log_chaos_event("error_injection", f"Injected 500 error for {request.url.path}")
+        raise HTTPException(status_code=500, detail="Chaos-induced server error")
+    
+    # Slow response chaos
+    if chaos_state["slow_responses_active"]:
+        delay = random.uniform(2, 5)  # 2-5 second delay
+        await asyncio.sleep(delay)
+        log_chaos_event("slow_responses", f"Injected {delay:.2f}s delay for {request.url.path}")
+    
+    response = await call_next(request)
+    return response
+
+def log_chaos_event(event_type: str, details: str):
+    """Log chaos engineering events"""
+    chaos_state["chaos_history"].append({
+        "timestamp": datetime.now().isoformat(),
+        "event_type": event_type,
+        "details": details
+    })
+    # Keep only last 50 events
+    if len(chaos_state["chaos_history"]) > 50:
+        chaos_state["chaos_history"] = chaos_state["chaos_history"][-50:]
+    
+    # Update Prometheus metrics
+    chaos_events_counter.labels(chaos_type="general", event_type=event_type).inc()
+    
+    # Update memory usage gauge
+    chaos_memory_usage.set(len(chaos_state["memory_objects"]))
+
+def memory_leak_thread():
+    """Create a memory leak by allocating objects"""
+    while chaos_state["memory_leak_active"]:
+        # Allocate 1MB of data every second
+        data = ["x" * 1024 for _ in range(1024)]
+        chaos_state["memory_objects"].append(data)
+        time.sleep(1)
+        if len(chaos_state["memory_objects"]) > 100:  # Limit to ~100MB
+            chaos_state["memory_objects"] = chaos_state["memory_objects"][-50:]
+
+def cpu_spike_thread():
+    """Create CPU spike by running intensive calculations"""
+    end_time = time.time() + 30  # Run for 30 seconds
+    while chaos_state["cpu_spike_active"] and time.time() < end_time:
+        # Intensive calculation
+        for i in range(100000):
+            math.sqrt(i * random.random())
+    chaos_state["cpu_spike_active"] = False
 
 if __name__ == "__main__":
     import uvicorn

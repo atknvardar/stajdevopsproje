@@ -108,38 +108,70 @@ jobs:
   integration-tests:
     name: 🧪 Integration Tests
     runs-on: ubuntu-latest
-    needs: deploy-staging
+    needs: build
     if: github.ref == 'refs/heads/main'
-
-    services:
-      microservice:
-        image: ghcr.io/${{ github.repository }}:${{ github.sha }}
-        ports:
-          - 8080:8080
-        env:
-          ENVIRONMENT: testing
-          LOG_LEVEL: DEBUG
 
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
 
-      - name: ⏳ Wait for service
+      - name: 🐳 Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🏗️ Build service image for testing
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./build/Dockerfile
+          load: true
+          tags: stajdevops-test:latest
+          cache-from: type=gha
+
+      - name: 🚀 Start microservice
         run: |
+          docker run -d \
+            --name microservice-test \
+            -p 8080:8080 \
+            -e ENVIRONMENT=testing \
+            -e LOG_LEVEL=DEBUG \
+            stajdevops-test:latest
+
+      - name: ⏳ Wait for service to be ready
+        run: |
+          echo "Waiting for service to start..."
           timeout 60 bash -c 'until curl -f http://localhost:8080/healthz; do sleep 2; done'
+          echo "Service is ready!"
 
       - name: 🧪 Run integration tests
         run: |
-          # Health check
+          echo "🔍 Testing health endpoint..."
           curl -f http://localhost:8080/healthz
           
-          # API tests
+          echo "🔍 Testing readiness endpoint..."
+          curl -f http://localhost:8080/ready
+          
+          echo "🔍 Testing API endpoints..."
           curl -f "http://localhost:8080/api/v1/hello?name=CI"
           
-          # Metrics endpoint
+          echo "🔍 Testing metrics endpoint..."
           curl -f http://localhost:8080/metrics
           
+          echo "🔍 Testing root endpoint..."
+          curl -f http://localhost:8080/
+          
           echo "✅ All integration tests passed!"
+
+      - name: 📋 Show service logs (if tests fail)
+        if: failure()
+        run: |
+          echo "=== Service Logs ==="
+          docker logs microservice-test
+
+      - name: 🧹 Cleanup
+        if: always()
+        run: |
+          docker stop microservice-test || true
+          docker rm microservice-test || true
 
   # 🏭 Production Deploy (manual approval)
   deploy-production:

@@ -8,6 +8,7 @@ This document provides comprehensive documentation for the Enterprise DevOps Pip
 - [Authentication](#authentication)
 - [Health Check Endpoints](#health-check-endpoints)
 - [Business Logic Endpoints](#business-logic-endpoints)
+- [🔴 Chaos Engineering Endpoints](#-chaos-engineering-endpoints)
 - [Metrics Endpoint](#metrics-endpoint)
 - [Error Handling](#error-handling)
 - [Rate Limiting](#rate-limiting)
@@ -242,6 +243,337 @@ curl -X POST http://localhost:8080/api/v1/hello \
 **Validation Rules**:
 - `name`: String, maximum 100 characters
 - Request body must be valid JSON
+
+## 🔴 Chaos Engineering Endpoints
+
+The chaos engineering system allows you to intentionally inject failures into your application to test resilience and self-healing capabilities. This follows Netflix's Chaos Monkey principles.
+
+> ⚠️ **WARNING**: Only use chaos engineering in development/testing environments or with proper safeguards in production!
+
+### 🎛️ Interactive Chaos Control Panel
+
+Use these ready-to-copy commands to control chaos scenarios:
+
+#### 🔴 **INJECT CHAOS BUTTONS** - Click to copy!
+
+```bash
+# 💾 Memory Leak Injection
+curl -X POST "http://localhost:8080/admin/chaos/inject?chaos_type=memory_leak"
+```
+
+```bash
+# 🐌 Slow Response Injection  
+curl -X POST "http://localhost:8080/admin/chaos/inject?chaos_type=slow_responses"
+```
+
+```bash
+# ⚠️ Error Injection
+curl -X POST "http://localhost:8080/admin/chaos/inject?chaos_type=error_injection"
+```
+
+```bash
+# 🔥 CPU Spike Injection
+curl -X POST "http://localhost:8080/admin/chaos/inject?chaos_type=cpu_spike"
+```
+
+```bash
+# 🎲 Random Chaos
+curl -X POST "http://localhost:8080/admin/chaos/inject?chaos_type=random"
+```
+
+#### ✅ **HEALING BUTTONS** - Emergency Recovery!
+
+```bash
+# 🛡️ HEAL ALL CHAOS - Emergency Stop!
+curl -X POST "http://localhost:8080/admin/chaos/heal"
+```
+
+```bash
+# 📊 Check Chaos Status
+curl -X GET "http://localhost:8080/admin/chaos/status"
+```
+
+```bash
+# 📈 View Healing Reports
+curl -X GET "http://localhost:8080/admin/healing-reports"
+```
+
+### Chaos Injection Endpoint
+
+**Endpoint**: `POST /admin/chaos/inject`
+
+**Purpose**: Inject specific chaos scenarios into the running application.
+
+**Parameters**:
+- `chaos_type` (query, required): Type of chaos to inject
+
+**Available Chaos Types**:
+- `memory_leak`: Gradual memory consumption increase (~1MB/second)
+- `slow_responses`: Artificial delays in responses (2-5 seconds)
+- `error_injection`: Random 500 errors (30% failure rate)
+- `cpu_spike`: High CPU usage burst (30 seconds)
+- `random`: Randomly select one of the above
+
+**Request**:
+```http
+POST /admin/chaos/inject?chaos_type=memory_leak HTTP/1.1
+Host: localhost:8080
+```
+
+**Response**:
+```json
+{
+  "chaos_type": "memory_leak",
+  "status": "activated",
+  "timestamp": "2024-01-15T10:30:00Z",
+  "details": "Memory leak started - will consume ~1MB/second"
+}
+```
+
+**Response Codes**:
+- `200 OK`: Chaos successfully injected
+- `400 Bad Request`: Invalid chaos type
+- `503 Service Unavailable`: Service unhealthy, chaos injection disabled
+
+**Chaos Scenarios Details**:
+
+#### 💾 Memory Leak Chaos
+- **Effect**: Gradual memory allocation
+- **Rate**: ~1MB per second
+- **Limit**: Maximum 100MB to prevent system crash
+- **Detection**: Memory usage alerts trigger at >80% usage
+
+#### 🐌 Slow Response Chaos
+- **Effect**: Artificial delays in API responses
+- **Delay Range**: 2-5 seconds randomly
+- **Scope**: All API endpoints except admin/health/metrics
+- **Detection**: Response time alerts trigger at >1 second
+
+#### ⚠️ Error Injection Chaos
+- **Effect**: Random HTTP 500 errors
+- **Rate**: 30% of requests fail
+- **Scope**: All API endpoints except admin/health/metrics
+- **Detection**: Error rate alerts trigger at >5% error rate
+
+#### 🔥 CPU Spike Chaos
+- **Effect**: Intensive CPU calculations
+- **Duration**: 30 seconds
+- **Impact**: High CPU utilization
+- **Detection**: CPU usage alerts trigger at >80% usage
+
+### Chaos Healing Endpoint
+
+**Endpoint**: `POST /admin/chaos/heal`
+
+**Purpose**: Stop all active chaos scenarios and restore normal operation.
+
+**Request**:
+```http
+POST /admin/chaos/heal HTTP/1.1
+Host: localhost:8080
+```
+
+**Response**:
+```json
+{
+  "status": "healed",
+  "actions_taken": [
+    "memory_leak_stopped",
+    "slow_responses_stopped",
+    "error_injection_stopped",
+    "cpu_spike_stopped"
+  ],
+  "timestamp": "2024-01-15T10:30:00Z",
+  "message": "All chaos scenarios stopped"
+}
+```
+
+**Healing Actions**:
+- **Memory Leak**: Clear allocated objects and force garbage collection
+- **Slow Responses**: Disable artificial delays
+- **Error Injection**: Disable random errors
+- **CPU Spike**: Stop intensive calculations
+
+### Chaos Status Endpoint
+
+**Endpoint**: `GET /admin/chaos/status`
+
+**Purpose**: Get real-time status of all chaos scenarios.
+
+**Request**:
+```http
+GET /admin/chaos/status HTTP/1.1
+Host: localhost:8080
+```
+
+**Response**:
+```json
+{
+  "active_chaos": ["memory_leak", "slow_responses"],
+  "chaos_count": 2,
+  "memory_objects_count": 45,
+  "recent_events": [
+    {
+      "timestamp": "2024-01-15T10:30:00Z",
+      "event_type": "memory_leak",
+      "details": "Memory leak injection started"
+    },
+    {
+      "timestamp": "2024-01-15T10:31:00Z", 
+      "event_type": "slow_responses",
+      "details": "Slow response injection activated"
+    }
+  ],
+  "system_impact": {
+    "any_chaos_active": true,
+    "estimated_memory_usage_mb": 45,
+    "performance_degraded": true
+  }
+}
+```
+
+### Healing Reports Endpoint
+
+**Endpoint**: `POST /admin/healing-report`
+
+**Purpose**: Store healing reports from automated n8n workflows.
+
+**Request Body**:
+```json
+{
+  "workflow_id": "healing_workflow_123",
+  "original_alert": {
+    "chaos_type": "memory_leak",
+    "severity": "critical"
+  },
+  "overall_status": "success",
+  "healing_steps": [
+    {
+      "step": "analysis",
+      "status": "completed",
+      "duration": "5s"
+    },
+    {
+      "step": "healing",
+      "status": "completed", 
+      "duration": "2s"
+    }
+  ]
+}
+```
+
+**Response**:
+```json
+{
+  "status": "stored",
+  "report_id": "healing_workflow_123",
+  "chaos_type": "memory_leak",
+  "timestamp": "2024-01-15T10:35:00Z"
+}
+```
+
+### Get Healing Reports Endpoint
+
+**Endpoint**: `GET /admin/healing-reports`
+
+**Purpose**: Retrieve stored healing reports and success metrics.
+
+**Response**:
+```json
+{
+  "total_reports": 25,
+  "reports": [
+    {
+      "workflow_id": "healing_workflow_123",
+      "chaos_type": "memory_leak",
+      "overall_status": "success",
+      "stored_at": "2024-01-15T10:35:00Z"
+    }
+  ],
+  "summary": {
+    "successful_healings": 20,
+    "partial_healings": 3, 
+    "failed_healings": 2
+  }
+}
+```
+
+### 🚨 Chaos Safety Features
+
+#### Health Check Protection
+- Chaos injection is **disabled** when service is unhealthy
+- Health checks (`/healthz`, `/ready`) are **never affected** by chaos
+- Metrics endpoint (`/metrics`) remains **always accessible**
+
+#### Resource Limits
+- **Memory Leak**: Limited to 100MB maximum allocation
+- **CPU Spike**: Limited to 30-second duration
+- **Automatic Cleanup**: Background threads clean up resources
+
+#### Event Logging
+- All chaos events are logged with timestamps
+- History limited to last 50 events to prevent memory leaks
+- Prometheus metrics track chaos activity
+
+### 🎯 Chaos Engineering Best Practices
+
+#### Pre-Chaos Checklist
+1. ✅ **Monitor Setup**: Ensure monitoring/alerting is configured
+2. ✅ **Backup Plan**: Have healing mechanisms ready
+3. ✅ **Time Window**: Run during low-traffic periods
+4. ✅ **Team Notification**: Alert team before starting chaos
+5. ✅ **Resource Limits**: Verify safety limits are in place
+
+#### During Chaos Testing
+1. 📊 **Monitor Dashboards**: Watch system metrics closely
+2. ⏰ **Time Limits**: Don't run chaos for extended periods
+3. 🚨 **Alert Response**: Test if alerts fire as expected
+4. 🔍 **Log Analysis**: Monitor logs for error patterns
+5. ⚡ **Quick Recovery**: Be ready to heal immediately
+
+#### Post-Chaos Analysis
+1. 📈 **Metrics Review**: Analyze performance impact
+2. 🐛 **Issue Discovery**: Document any weaknesses found
+3. 🛠️ **Improvements**: Plan resilience improvements
+4. 📝 **Documentation**: Update runbooks based on learnings
+5. 🎯 **Next Steps**: Plan follow-up chaos experiments
+
+### 🤖 Automated Self-Healing Integration
+
+The chaos engineering system integrates with n8n workflow automation for **automated detection and healing**:
+
+#### Self-Healing Workflow
+1. **🔴 Chaos Injection** → Prometheus metrics change
+2. **📊 Alert Detection** → Alertmanager sends webhook to n8n
+3. **🧠 AI Analysis** → Cursor AI analyzes the problem
+4. **🔧 Automated Healing** → n8n triggers healing endpoint
+5. **🧪 Validation** → System tests confirm recovery
+6. **📋 Reporting** → Healing report stored for analysis
+
+#### n8n Webhook Endpoint
+```bash
+# n8n receives alerts at this endpoint
+POST http://n8n:5678/webhook/chaos-alert
+```
+
+#### Example Alert Payload
+```json
+{
+  "alerts": [
+    {
+      "labels": {
+        "alertname": "ChaosMemoryLeak",
+        "chaos_type": "memory_leak",
+        "severity": "critical"
+      },
+      "annotations": {
+        "description": "Memory usage increased significantly",
+        "runbook_url": "https://docs.company.com/runbooks/memory"
+      }
+    }
+  ]
+}
+```
 
 ## 📊 Metrics Endpoint
 

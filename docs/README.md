@@ -27,6 +27,13 @@ This documentation is organized into several sections, each focusing on a specif
 - **Error Handling**: Error codes and troubleshooting
 - **SDK and Examples**: Code examples and client libraries
 
+### 🔴 [Chaos Engineering Documentation](chaos-engineering/README.md)
+- **Chaos Scenarios**: Memory leak, slow responses, error injection, CPU spike
+- **Self-Healing System**: AI-powered automated recovery with n8n workflows
+- **Interactive Control Panel**: One-click chaos injection and healing buttons
+- **Monitoring Integration**: Prometheus alerts and Grafana dashboards
+- **Best Practices**: Safe chaos engineering guidelines and procedures
+
 ### 🛡️ [Security Documentation](security/README.md)
 - **Security Policies**: Comprehensive security framework
 - **RBAC Implementation**: Role-based access control

@@ -1,5 +1,6 @@
 # OpenShift-Based Microservice CI/CD and Observability Platform
 
+[![CI/CD Pipeline](https://github.com/atknvardar/stajdevopsproje/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/atknvardar/stajdevopsproje/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python](https://img.shields.io/badge/python-v3.9+-blue.svg)](https://www.python.org/)
 [![OpenShift](https://img.shields.io/badge/OpenShift-4.x-red.svg)](https://www.openshift.com/)

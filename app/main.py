@@ -99,7 +99,7 @@ app_state = {
     "startup_time": time.time(),
     "ready": False,
     "healthy": True,
-    "version": "2.2.2",
+    "version": "2.2.3",
     "weather_cache": {},
     "api_health": {},
     "data_quality_metrics": {}

@@ -1,0 +1,105 @@
+apiVersion: 1
+
+# List of data sources to insert/update depending on what's available in the database
+datasources:
+  # Prometheus data source for metrics
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    version: 1
+    editable: false
+    basicAuth: false
+    jsonData:
+      httpMethod: POST
+      queryTimeout: 60s
+      timeInterval: 15s
+      # Enable exemplars for trace integration
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: loki
+    uid: prometheus
+
+  # Loki data source for logs
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    version: 1
+    editable: false
+    basicAuth: false
+    jsonData:
+      maxLines: 1000
+      # Derived fields for trace correlation
+      derivedFields:
+        - datasourceUid: prometheus
+          matcherRegex: "trace_id=(\\w+)"
+          name: TraceID
+          url: "${__value.raw}"
+    uid: loki
+
+  # Jaeger data source for distributed tracing (optional)
+  - name: Jaeger
+    type: jaeger
+    access: proxy
+    url: http://jaeger:16686
+    version: 1
+    editable: false
+    basicAuth: false
+    jsonData:
+      # Trace to logs integration
+      tracesToLogs:
+        datasourceUid: loki
+        tags: ['job', 'instance', 'pod', 'namespace']
+        mappedTags: [{ key: 'service_name', value: 'service' }]
+        mapTagNamesEnabled: false
+        spanStartTimeShift: '1h'
+        spanEndTimeShift: '1h'
+        filterByTraceID: false
+        filterBySpanID: false
+      # Trace to metrics integration
+      tracesToMetrics:
+        datasourceUid: prometheus
+        tags: [{ key: 'service.name', value: 'service' }, { key: 'job' }]
+        queries:
+          - name: 'Sample query'
+            query: 'sum(rate(traces_spanmetrics_latency_bucket{$$__tags}[5m]))'
+      nodeGraph:
+        enabled: true
+    uid: jaeger
+
+  # AlertManager data source
+  - name: AlertManager
+    type: alertmanager
+    access: proxy
+    url: http://alertmanager:9093
+    version: 1
+    editable: false
+    basicAuth: false
+    jsonData:
+      # Implementation of AlertManager data source
+      implementation: prometheus
+    uid: alertmanager
+
+  # Node Exporter metrics
+  - name: Node Exporter
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    version: 1
+    editable: false
+    basicAuth: false
+    jsonData:
+      httpMethod: POST
+      queryTimeout: 60s
+      timeInterval: 15s
+    uid: node-exporter
+
+  # TestData for demo purposes
+  - name: TestData
+    type: testdata
+    access: proxy
+    version: 1
+    editable: true
+    uid: testdata 

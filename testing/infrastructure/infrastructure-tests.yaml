@@ -1,0 +1,559 @@
+---
+# Infrastructure Validation Tests
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: infrastructure-validation-tests
+  namespace: testing
+  labels:
+    app.kubernetes.io/name: testing
+    app.kubernetes.io/component: infrastructure-tests
+data:
+  infrastructure-test-config.yaml: |
+    test_suite:
+      name: "Infrastructure Validation Tests"
+      version: "1.0"
+      timeout: 600
+      
+    test_categories:
+      cluster_health:
+        - name: "Node Readiness"
+          command: "kubectl get nodes --no-headers | grep -v Ready || echo 'All nodes ready'"
+          expected_exit_code: 0
+          timeout: 30
+        
+        - name: "Core System Pods"
+          command: "kubectl get pods -n kube-system --field-selector=status.phase!=Running | tail -n +2 | wc -l"
+          expected_output: "0"
+          timeout: 30
+        
+        - name: "OpenShift Router Health"
+          command: "oc get pods -n openshift-ingress --field-selector=status.phase=Running | grep router | wc -l"
+          expected_min_value: 1
+          timeout: 30
+        
+        - name: "etcd Cluster Health"
+          command: "oc get pods -n openshift-etcd --field-selector=status.phase=Running | grep etcd | wc -l"
+          expected_min_value: 1
+          timeout: 30
+      
+      namespace_validation:
+        - name: "Required Namespaces Exist"
+          command: |
+            namespaces="microservice-demo-dev microservice-demo-staging microservice-demo-prod observability security-tools ci-cd"
+            for ns in $namespaces; do
+              if ! kubectl get namespace $ns > /dev/null 2>&1; then
+                echo "Missing namespace: $ns"
+                exit 1
+              fi
+            done
+            echo "All required namespaces exist"
+          expected_exit_code: 0
+          timeout: 30
+        
+        - name: "Namespace Labels"
+          command: |
+            kubectl get namespace microservice-demo-prod -o jsonpath='{.metadata.labels.pod-security\.kubernetes\.io/enforce}'
+          expected_output: "restricted"
+          timeout: 30
+      
+      rbac_validation:
+        - name: "Service Accounts Exist"
+          command: |
+            kubectl get serviceaccount microservice-demo-sa -n microservice-demo-prod > /dev/null 2>&1
+            echo $?
+          expected_output: "0"
+          timeout: 30
+        
+        - name: "ClusterRoles Exist"
+          command: |
+            roles="devops-engineer sre security-auditor cicd-service readonly-user"
+            for role in $roles; do
+              if ! kubectl get clusterrole $role > /dev/null 2>&1; then
+                echo "Missing ClusterRole: $role"
+                exit 1
+              fi
+            done
+            echo "All ClusterRoles exist"
+          expected_exit_code: 0
+          timeout: 30
+        
+        - name: "RoleBindings Configured"
+          command: |
+            kubectl get rolebinding developers -n microservice-demo-dev > /dev/null 2>&1
+            echo $?
+          expected_output: "0"
+          timeout: 30
+      
+      resource_quotas:
+        - name: "Resource Quotas Applied"
+          command: |
+            namespaces="microservice-demo-dev microservice-demo-staging microservice-demo-prod"
+            for ns in $namespaces; do
+              quota_count=$(kubectl get resourcequota -n $ns --no-headers | wc -l)
+              if [ "$quota_count" -eq "0" ]; then
+                echo "No resource quota in namespace: $ns"
+                exit 1
+              fi
+            done
+            echo "Resource quotas configured"
+          expected_exit_code: 0
+          timeout: 30
+        
+        - name: "LimitRanges Applied"
+          command: |
+            namespaces="microservice-demo-dev microservice-demo-staging microservice-demo-prod"
+            for ns in $namespaces; do
+              limit_count=$(kubectl get limitrange -n $ns --no-headers | wc -l)
+              if [ "$limit_count" -eq "0" ]; then
+                echo "No limit range in namespace: $ns"
+                exit 1
+              fi
+            done
+            echo "Limit ranges configured"
+          expected_exit_code: 0
+          timeout: 30
+      
+      network_policies:
+        - name: "Network Policies Exist"
+          command: |
+            policy_count=$(kubectl get networkpolicy -A --no-headers | wc -l)
+            if [ "$policy_count" -lt "5" ]; then
+              echo "Insufficient network policies: $policy_count"
+              exit 1
+            fi
+            echo "Network policies configured: $policy_count"
+          expected_exit_code: 0
+          timeout: 30
+        
+        - name: "Default Deny Policy"
+          command: |
+            kubectl get networkpolicy default-deny-all -n microservice-demo-prod > /dev/null 2>&1
+            echo $?
+          expected_output: "0"
+          timeout: 30
+      
+      storage_validation:
+        - name: "Storage Classes Available"
+          command: |
+            sc_count=$(kubectl get storageclass --no-headers | wc -l)
+            if [ "$sc_count" -eq "0" ]; then
+              echo "No storage classes available"
+              exit 1
+            fi
+            echo "Storage classes available: $sc_count"
+          expected_exit_code: 0
+          timeout: 30
+        
+        - name: "PVC Provisioning Test"
+          command: |
+            kubectl apply -f - <<EOF
+            apiVersion: v1
+            kind: PersistentVolumeClaim
+            metadata:
+              name: test-pvc
+              namespace: testing
+            spec:
+              accessModes:
+                - ReadWriteOnce
+              resources:
+                requests:
+                  storage: 1Gi
+            EOF
+            sleep 10
+            status=$(kubectl get pvc test-pvc -n testing -o jsonpath='{.status.phase}')
+            kubectl delete pvc test-pvc -n testing --ignore-not-found=true
+            if [ "$status" != "Bound" ]; then
+              echo "PVC provisioning failed: $status"
+              exit 1
+            fi
+            echo "PVC provisioning successful"
+          expected_exit_code: 0
+          timeout: 60
+      
+      observability_stack:
+        - name: "Prometheus Running"
+          command: |
+            pod_count=$(kubectl get pods -n observability -l app=prometheus --field-selector=status.phase=Running --no-headers | wc -l)
+            if [ "$pod_count" -eq "0" ]; then
+              echo "Prometheus not running"
+              exit 1
+            fi
+            echo "Prometheus running: $pod_count pods"
+          expected_exit_code: 0
+          timeout: 30
+        
+        - name: "Grafana Running"
+          command: |
+            pod_count=$(kubectl get pods -n observability -l app=grafana --field-selector=status.phase=Running --no-headers | wc -l)
+            if [ "$pod_count" -eq "0" ]; then
+              echo "Grafana not running"
+              exit 1
+            fi
+            echo "Grafana running: $pod_count pods"
+          expected_exit_code: 0
+          timeout: 30
+        
+        - name: "Loki Running"
+          command: |
+            pod_count=$(kubectl get pods -n observability -l app=loki --field-selector=status.phase=Running --no-headers | wc -l)
+            if [ "$pod_count" -eq "0" ]; then
+              echo "Loki not running"
+              exit 1
+            fi
+            echo "Loki running: $pod_count pods"
+          expected_exit_code: 0
+          timeout: 30
+      
+      security_tools:
+        - name: "Security Scanners Running"
+          command: |
+            trivy_count=$(kubectl get pods -n security-tools -l app=trivy-scanner --field-selector=status.phase=Running --no-headers | wc -l)
+            if [ "$trivy_count" -eq "0" ]; then
+              echo "Trivy scanner not running"
+              exit 1
+            fi
+            echo "Security tools running: Trivy ($trivy_count pods)"
+          expected_exit_code: 0
+          timeout: 30
+        
+        - name: "Security Metrics Exporter"
+          command: |
+            pod_count=$(kubectl get pods -n security-tools -l app=security-metrics-exporter --field-selector=status.phase=Running --no-headers | wc -l)
+            if [ "$pod_count" -eq "0" ]; then
+              echo "Security metrics exporter not running"
+              exit 1
+            fi
+            echo "Security metrics exporter running: $pod_count pods"
+          expected_exit_code: 0
+          timeout: 30
+      
+      deployment_validation:
+        - name: "Microservice Deployments"
+          command: |
+            namespaces="microservice-demo-dev microservice-demo-staging microservice-demo-prod"
+            for ns in $namespaces; do
+              deployment_count=$(kubectl get deployment -n $ns --no-headers | wc -l)
+              if [ "$deployment_count" -eq "0" ]; then
+                echo "No deployments in namespace: $ns"
+                exit 1
+              fi
+              ready_count=$(kubectl get deployment -n $ns -o jsonpath='{.items[*].status.readyReplicas}' | wc -w)
+              if [ "$ready_count" -eq "0" ]; then
+                echo "No ready deployments in namespace: $ns"
+                exit 1
+              fi
+            done
+            echo "Microservice deployments healthy"
+          expected_exit_code: 0
+          timeout: 60
+        
+        - name: "Service Endpoints"
+          command: |
+            namespaces="microservice-demo-dev microservice-demo-staging microservice-demo-prod"
+            for ns in $namespaces; do
+              endpoint_count=$(kubectl get endpoints -n $ns --no-headers | grep -v '<none>' | wc -l)
+              if [ "$endpoint_count" -eq "0" ]; then
+                echo "No service endpoints in namespace: $ns"
+                exit 1
+              fi
+            done
+            echo "Service endpoints configured"
+          expected_exit_code: 0
+          timeout: 30
+
+  run-infrastructure-tests.py: |
+    #!/usr/bin/env python3
+    """
+    Infrastructure Validation Test Runner
+    """
+    
+    import subprocess
+    import yaml
+    import json
+    import time
+    import sys
+    from datetime import datetime
+    from typing import Dict, List, Any
+    
+    class InfrastructureTestRunner:
+        def __init__(self, config_file: str):
+            with open(config_file, 'r') as f:
+                self.config = yaml.safe_load(f)
+            self.results = {
+                'suite_name': self.config['test_suite']['name'],
+                'start_time': datetime.now().isoformat(),
+                'tests': [],
+                'summary': {
+                    'total': 0,
+                    'passed': 0,
+                    'failed': 0,
+                    'success_rate': 0
+                }
+            }
+        
+        def run_command(self, command: str, timeout: int = 30) -> tuple:
+            """Execute shell command and return result"""
+            try:
+                result = subprocess.run(
+                    command,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout
+                )
+                return result.returncode, result.stdout.strip(), result.stderr.strip()
+            except subprocess.TimeoutExpired:
+                return -1, "", f"Command timed out after {timeout} seconds"
+            except Exception as e:
+                return -1, "", str(e)
+        
+        def run_test(self, test: Dict[str, Any], category: str) -> Dict[str, Any]:
+            """Run a single infrastructure test"""
+            test_result = {
+                'name': test['name'],
+                'category': category,
+                'command': test['command'],
+                'start_time': datetime.now().isoformat(),
+                'status': 'PASS',
+                'error': None,
+                'details': {}
+            }
+            
+            try:
+                timeout = test.get('timeout', 30)
+                exit_code, stdout, stderr = self.run_command(test['command'], timeout)
+                
+                test_result['details'] = {
+                    'exit_code': exit_code,
+                    'stdout': stdout,
+                    'stderr': stderr
+                }
+                
+                # Check exit code
+                expected_exit_code = test.get('expected_exit_code')
+                if expected_exit_code is not None:
+                    if exit_code != expected_exit_code:
+                        test_result['status'] = 'FAIL'
+                        test_result['error'] = f"Expected exit code {expected_exit_code}, got {exit_code}"
+                        if stderr:
+                            test_result['error'] += f". Error: {stderr}"
+                        return test_result
+                
+                # Check output
+                expected_output = test.get('expected_output')
+                if expected_output is not None:
+                    if stdout != expected_output:
+                        test_result['status'] = 'FAIL'
+                        test_result['error'] = f"Expected output '{expected_output}', got '{stdout}'"
+                        return test_result
+                
+                # Check minimum value
+                expected_min_value = test.get('expected_min_value')
+                if expected_min_value is not None:
+                    try:
+                        actual_value = int(stdout)
+                        if actual_value < expected_min_value:
+                            test_result['status'] = 'FAIL'
+                            test_result['error'] = f"Value {actual_value} below minimum {expected_min_value}"
+                            return test_result
+                    except ValueError:
+                        test_result['status'] = 'FAIL'
+                        test_result['error'] = f"Cannot parse output as integer: '{stdout}'"
+                        return test_result
+                
+                # If command failed but no specific checks, mark as failed
+                if exit_code != 0 and expected_exit_code is None:
+                    test_result['status'] = 'FAIL'
+                    test_result['error'] = f"Command failed with exit code {exit_code}"
+                    if stderr:
+                        test_result['error'] += f": {stderr}"
+                
+            except Exception as e:
+                test_result['status'] = 'FAIL'
+                test_result['error'] = f"Test execution failed: {str(e)}"
+            
+            test_result['end_time'] = datetime.now().isoformat()
+            return test_result
+        
+        def run_all_tests(self):
+            """Run all infrastructure tests"""
+            print(f"Starting infrastructure validation: {self.config['test_suite']['name']}")
+            
+            all_results = []
+            
+            for category, tests in self.config['test_categories'].items():
+                print(f"\n=== Running {category} tests ===")
+                
+                for test in tests:
+                    print(f"Running: {test['name']}")
+                    result = self.run_test(test, category)
+                    all_results.append(result)
+                    
+                    status_symbol = "✅" if result['status'] == 'PASS' else "❌"
+                    print(f"  {status_symbol} {result['status']}")
+                    
+                    if result['status'] == 'FAIL':
+                        print(f"    Error: {result['error']}")
+            
+            # Calculate summary
+            self.results['tests'] = all_results
+            self.results['summary']['total'] = len(all_results)
+            self.results['summary']['passed'] = len([r for r in all_results if r['status'] == 'PASS'])
+            self.results['summary']['failed'] = len([r for r in all_results if r['status'] == 'FAIL'])
+            self.results['summary']['success_rate'] = (self.results['summary']['passed'] / self.results['summary']['total']) * 100
+            self.results['end_time'] = datetime.now().isoformat()
+            
+            return self.results
+        
+        def print_summary(self):
+            """Print test results summary"""
+            print("\n" + "="*60)
+            print("INFRASTRUCTURE VALIDATION SUMMARY")
+            print("="*60)
+            print(f"Suite: {self.results['suite_name']}")
+            print(f"Total Tests: {self.results['summary']['total']}")
+            print(f"Passed: {self.results['summary']['passed']}")
+            print(f"Failed: {self.results['summary']['failed']}")
+            print(f"Success Rate: {self.results['summary']['success_rate']:.2f}%")
+            
+            # Print failures
+            failed_tests = [t for t in self.results['tests'] if t['status'] == 'FAIL']
+            if failed_tests:
+                print("\nFAILED TESTS:")
+                for test in failed_tests:
+                    print(f"  ❌ {test['category']}/{test['name']}")
+                    print(f"     Error: {test['error']}")
+        
+        def save_results(self, filename: str):
+            """Save results to JSON file"""
+            with open(filename, 'w') as f:
+                json.dump(self.results, f, indent=2)
+            print(f"\nResults saved to: {filename}")
+    
+    if __name__ == "__main__":
+        config_file = sys.argv[1] if len(sys.argv) > 1 else '/tests/infrastructure-test-config.yaml'
+        runner = InfrastructureTestRunner(config_file)
+        
+        try:
+            runner.run_all_tests()
+            runner.print_summary()
+            runner.save_results('infrastructure-test-results.json')
+            
+            # Exit with error code if tests failed
+            if runner.results['summary']['failed'] > 0:
+                sys.exit(1)
+            
+        except Exception as e:
+            print(f"\nTest suite failed: {str(e)}")
+            sys.exit(1)
+
+---
+# Infrastructure Test Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: infrastructure-validation-tests
+  namespace: testing
+  labels:
+    app.kubernetes.io/name: testing
+    app.kubernetes.io/component: infrastructure-tests
+spec:
+  template:
+    metadata:
+      labels:
+        app: infrastructure-validation-tests
+    spec:
+      serviceAccountName: test-runner-sa
+      restartPolicy: Never
+      containers:
+        - name: test-runner
+          image: python:3.9-slim
+          command: ["/bin/bash"]
+          args:
+            - -c
+            - |
+              apt-get update && apt-get install -y curl
+              curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+              chmod +x kubectl && mv kubectl /usr/local/bin/
+              curl -LO "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz"
+              tar -xzf openshift-client-linux.tar.gz && mv oc /usr/local/bin/
+              pip install pyyaml
+              python /tests/run-infrastructure-tests.py /tests/infrastructure-test-config.yaml
+          volumeMounts:
+            - name: test-scripts
+              mountPath: /tests
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: test-scripts
+          configMap:
+            name: infrastructure-validation-tests
+            defaultMode: 0755
+  backoffLimit: 3
+
+---
+# Service Account for Test Runner
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: test-runner-sa
+  namespace: testing
+  labels:
+    app.kubernetes.io/name: testing
+    app.kubernetes.io/component: service-account
+
+---
+# ClusterRole for Test Runner
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: test-runner
+  labels:
+    app.kubernetes.io/name: testing
+    app.kubernetes.io/component: rbac
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "namespaces", "pods", "services", "endpoints", "serviceaccounts", "persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles", "clusterrolebindings", "roles", "rolebindings"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["resourcequotas", "limitranges"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["route.openshift.io"]
+    resources: ["routes"]
+    verbs: ["get", "list", "watch"]
+
+---
+# ClusterRoleBinding for Test Runner
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: test-runner
+  labels:
+    app.kubernetes.io/name: testing
+    app.kubernetes.io/component: rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: test-runner
+subjects:
+  - kind: ServiceAccount
+    name: test-runner-sa
+    namespace: testing 

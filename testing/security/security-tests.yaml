@@ -1,0 +1,327 @@
+---
+# Security Validation Tests
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: security-validation-tests
+  namespace: testing
+  labels:
+    app.kubernetes.io/name: testing
+    app.kubernetes.io/component: security-tests
+data:
+  security-test-config.yaml: |
+    test_suite:
+      name: "Security Validation Tests"
+      version: "1.0"
+      timeout: 900
+      
+    test_categories:
+      network_security:
+        - name: "Default Deny Network Policy"
+          command: |
+            kubectl get networkpolicy default-deny-all -n microservice-demo-prod > /dev/null 2>&1
+            echo $?
+          expected_output: "0"
+          timeout: 30
+        
+        - name: "Network Policy Count"
+          command: |
+            kubectl get networkpolicy -A --no-headers | wc -l
+          expected_min_value: 5
+          timeout: 30
+        
+        - name: "Cross-Namespace Communication Blocked"
+          command: |
+            kubectl run test-pod --image=busybox --rm -i --restart=Never -n testing -- nslookup microservice-demo.microservice-demo-prod.svc.cluster.local || echo "DNS_BLOCKED"
+          contains: ["DNS_BLOCKED", "server can't find"]
+          timeout: 60
+      
+      pod_security:
+        - name: "Pod Security Standards Labels"
+          command: |
+            prod_label=$(kubectl get namespace microservice-demo-prod -o jsonpath='{.metadata.labels.pod-security\.kubernetes\.io/enforce}')
+            if [ "$prod_label" != "restricted" ]; then
+              echo "FAIL: Production namespace not restricted"
+              exit 1
+            fi
+            echo "Pod Security Standards configured correctly"
+          expected_exit_code: 0
+          timeout: 30
+        
+        - name: "Non-Root User Enforcement"
+          command: |
+            kubectl apply -f - <<EOF || echo "BLOCKED_AS_EXPECTED"
+            apiVersion: v1
+            kind: Pod
+            metadata:
+              name: root-test-pod
+              namespace: microservice-demo-prod
+            spec:
+              containers:
+              - name: test
+                image: busybox
+                securityContext:
+                  runAsUser: 0
+                command: ["sleep", "30"]
+            EOF
+          expected_output: "BLOCKED_AS_EXPECTED"
+          timeout: 30
+        
+        - name: "Privileged Container Blocked"
+          command: |
+            kubectl apply -f - <<EOF || echo "BLOCKED_AS_EXPECTED"
+            apiVersion: v1
+            kind: Pod
+            metadata:
+              name: privileged-test-pod
+              namespace: microservice-demo-prod
+            spec:
+              containers:
+              - name: test
+                image: busybox
+                securityContext:
+                  privileged: true
+                command: ["sleep", "30"]
+            EOF
+          expected_output: "BLOCKED_AS_EXPECTED"
+          timeout: 30
+      
+      rbac_security:
+        - name: "Anonymous Access Denied"
+          command: |
+            kubectl auth can-i get pods --as=system:anonymous -n microservice-demo-prod
+            if [ $? -eq 0 ]; then
+              echo "FAIL: Anonymous access allowed"
+              exit 1
+            else
+              echo "Anonymous access properly denied"
+            fi
+          expected_exit_code: 0
+          timeout: 30
+        
+        - name: "Service Account Token Mounted"
+          command: |
+            sa_count=$(kubectl get serviceaccount -n microservice-demo-prod --no-headers | wc -l)
+            if [ "$sa_count" -eq "0" ]; then
+              echo "FAIL: No service accounts found"
+              exit 1
+            fi
+            echo "Service accounts configured: $sa_count"
+          expected_exit_code: 0
+          timeout: 30
+
+  run-security-tests.py: |
+    #!/usr/bin/env python3
+    import subprocess
+    import yaml
+    import json
+    import sys
+    from datetime import datetime
+    from typing import Dict, List, Any
+    
+    class SecurityTestRunner:
+        def __init__(self, config_file: str):
+            with open(config_file, 'r') as f:
+                self.config = yaml.safe_load(f)
+            self.results = {
+                'suite_name': self.config['test_suite']['name'],
+                'start_time': datetime.now().isoformat(),
+                'tests': [],
+                'summary': {'total': 0, 'passed': 0, 'failed': 0, 'warnings': 0, 'success_rate': 0}
+            }
+        
+        def run_command(self, command: str, timeout: int = 30) -> tuple:
+            try:
+                result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=timeout)
+                return result.returncode, result.stdout.strip(), result.stderr.strip()
+            except subprocess.TimeoutExpired:
+                return -1, "", f"Command timed out after {timeout} seconds"
+            except Exception as e:
+                return -1, "", str(e)
+        
+        def run_test(self, test: Dict[str, Any], category: str) -> Dict[str, Any]:
+            test_result = {
+                'name': test['name'], 'category': category, 'command': test['command'],
+                'start_time': datetime.now().isoformat(), 'status': 'PASS', 'error': None, 'details': {}
+            }
+            
+            try:
+                timeout = test.get('timeout', 30)
+                exit_code, stdout, stderr = self.run_command(test['command'], timeout)
+                test_result['details'] = {'exit_code': exit_code, 'stdout': stdout, 'stderr': stderr}
+                
+                if 'WARN:' in stdout:
+                    test_result['status'] = 'WARNING'
+                    test_result['warning'] = stdout
+                
+                expected_exit_code = test.get('expected_exit_code')
+                if expected_exit_code is not None and exit_code != expected_exit_code:
+                    test_result['status'] = 'FAIL'
+                    test_result['error'] = f"Expected exit code {expected_exit_code}, got {exit_code}"
+                    return test_result
+                
+                expected_output = test.get('expected_output')
+                if expected_output is not None and stdout != expected_output:
+                    test_result['status'] = 'FAIL'
+                    test_result['error'] = f"Expected output '{expected_output}', got '{stdout}'"
+                    return test_result
+                
+                expected_min_value = test.get('expected_min_value')
+                if expected_min_value is not None:
+                    try:
+                        actual_value = int(stdout)
+                        if actual_value < expected_min_value:
+                            test_result['status'] = 'FAIL'
+                            test_result['error'] = f"Value {actual_value} below minimum {expected_min_value}"
+                            return test_result
+                    except ValueError:
+                        test_result['status'] = 'FAIL'
+                        test_result['error'] = f"Cannot parse output as integer: '{stdout}'"
+                        return test_result
+                
+                contains = test.get('contains', [])
+                if contains:
+                    found = any(expected_text in stdout for expected_text in contains)
+                    if not found:
+                        test_result['status'] = 'FAIL'
+                        test_result['error'] = f"Output does not contain any of: {contains}"
+                        return test_result
+                
+                if exit_code != 0 and expected_exit_code is None:
+                    test_result['status'] = 'FAIL'
+                    test_result['error'] = f"Command failed with exit code {exit_code}"
+                    if stderr:
+                        test_result['error'] += f": {stderr}"
+                
+            except Exception as e:
+                test_result['status'] = 'FAIL'
+                test_result['error'] = f"Test execution failed: {str(e)}"
+            
+            test_result['end_time'] = datetime.now().isoformat()
+            return test_result
+        
+        def run_all_tests(self):
+            print(f"Starting security validation: {self.config['test_suite']['name']}")
+            all_results = []
+            
+            for category, tests in self.config['test_categories'].items():
+                print(f"\n=== Running {category} tests ===")
+                for test in tests:
+                    print(f"Running: {test['name']}")
+                    result = self.run_test(test, category)
+                    all_results.append(result)
+                    
+                    if result['status'] == 'PASS':
+                        print(f"  ✅ PASS")
+                    elif result['status'] == 'WARNING':
+                        print(f"  ⚠️  WARNING")
+                    else:
+                        print(f"  ❌ FAIL: {result['error']}")
+            
+            self.results['tests'] = all_results
+            self.results['summary']['total'] = len(all_results)
+            self.results['summary']['passed'] = len([r for r in all_results if r['status'] == 'PASS'])
+            self.results['summary']['failed'] = len([r for r in all_results if r['status'] == 'FAIL'])
+            self.results['summary']['warnings'] = len([r for r in all_results if r['status'] == 'WARNING'])
+            
+            if self.results['summary']['total'] > 0:
+                self.results['summary']['success_rate'] = ((self.results['summary']['passed'] + self.results['summary']['warnings']) / self.results['summary']['total']) * 100
+            
+            self.results['end_time'] = datetime.now().isoformat()
+            return self.results
+        
+        def print_summary(self):
+            print("\n" + "="*60)
+            print("SECURITY VALIDATION SUMMARY")
+            print("="*60)
+            print(f"Total Tests: {self.results['summary']['total']}")
+            print(f"Passed: {self.results['summary']['passed']}")
+            print(f"Warnings: {self.results['summary']['warnings']}")
+            print(f"Failed: {self.results['summary']['failed']}")
+            print(f"Success Rate: {self.results['summary']['success_rate']:.2f}%")
+            
+            failed_tests = [t for t in self.results['tests'] if t['status'] == 'FAIL']
+            if failed_tests:
+                print("\nCRITICAL SECURITY ISSUES:")
+                for test in failed_tests:
+                    print(f"  ❌ {test['category']}/{test['name']}: {test['error']}")
+        
+        def save_results(self, filename: str):
+            with open(filename, 'w') as f:
+                json.dump(self.results, f, indent=2)
+            print(f"\nResults saved to: {filename}")
+    
+    if __name__ == "__main__":
+        config_file = sys.argv[1] if len(sys.argv) > 1 else '/tests/security-test-config.yaml'
+        runner = SecurityTestRunner(config_file)
+        
+        try:
+            runner.run_all_tests()
+            runner.print_summary()
+            runner.save_results('security-test-results.json')
+            
+            if runner.results['summary']['failed'] > 0:
+                print("\n⚠️  CRITICAL SECURITY ISSUES DETECTED!")
+                sys.exit(1)
+            else:
+                print("\n✅ Security validation completed!")
+                sys.exit(0)
+        except Exception as e:
+            print(f"\nSecurity test suite failed: {str(e)}")
+            sys.exit(1)
+
+---
+# Security Test Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: security-validation-tests
+  namespace: testing
+  labels:
+    app.kubernetes.io/name: testing
+    app.kubernetes.io/component: security-tests
+spec:
+  template:
+    metadata:
+      labels:
+        app: security-validation-tests
+    spec:
+      serviceAccountName: test-runner-sa
+      restartPolicy: Never
+      containers:
+        - name: test-runner
+          image: python:3.9-slim
+          command: ["/bin/bash"]
+          args:
+            - -c
+            - |
+              apt-get update && apt-get install -y curl wget
+              curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+              chmod +x kubectl && mv kubectl /usr/local/bin/
+              curl -LO "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz"
+              tar -xzf openshift-client-linux.tar.gz && mv oc /usr/local/bin/
+              pip install pyyaml
+              python /tests/run-security-tests.py /tests/security-test-config.yaml
+          volumeMounts:
+            - name: test-scripts
+              mountPath: /tests
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: test-scripts
+          configMap:
+            name: security-validation-tests
+            defaultMode: 0755
+  backoffLimit: 3 

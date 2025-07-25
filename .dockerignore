@@ -1,0 +1,75 @@
+# Git files
+.git
+.gitignore
+.github
+
+# Documentation
+README.md
+docs/
+*.md
+
+# CI/CD
+cicd/
+.jenkins/
+Jenkinsfile
+
+# Development
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+
+# Virtual environments (already copied in Dockerfile)
+app/venv/
+venv/
+env/
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Monitoring configs (not needed in container)
+observability/
+monitoring/
+
+# OpenShift configs (not needed in container)
+openshift/
+
+# Testing configs (not needed in container)  
+testing/
+
+# Governance (not needed in container)
+governance/
+
+# Archive files
+*.tar.gz
+*.zip
+
+# Kubernetes yamls
+*.yaml
+*.yml 

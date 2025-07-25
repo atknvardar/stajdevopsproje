@@ -1,0 +1,292 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: deploy-task
+  labels:
+    app: microservice-demo
+spec:
+  description: |
+    Deploy microservice to OpenShift using Kustomize
+  params:
+    - name: image-name
+      type: string
+      description: Container image to deploy
+    - name: namespace
+      type: string
+      description: Target namespace
+    - name: environment
+      type: string
+      description: Environment (dev, staging, prod)
+    - name: manifests-path
+      type: string
+      description: Path to Kustomize manifests
+      default: openshift/overlays/dev
+  workspaces:
+    - name: source
+      description: Workspace containing the source code
+  steps:
+    - name: verify-prerequisites
+      image: registry.redhat.io/ubi8/ubi:latest
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/bin/bash
+        set -e
+        echo "Verifying deployment prerequisites..."
+        
+        # Check if oc is available
+        which oc || {
+          echo "❌ OpenShift CLI not found"
+          exit 1
+        }
+        
+        # Check if we're logged in
+        oc whoami || {
+          echo "❌ Not logged in to OpenShift"
+          exit 1
+        }
+        
+        # Check namespace access
+        oc get namespace $(params.namespace) || {
+          echo "❌ Cannot access namespace $(params.namespace)"
+          exit 1
+        }
+        
+        echo "✅ Prerequisites verified"
+
+    - name: prepare-manifests
+      image: registry.redhat.io/ubi8/ubi:latest
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/bin/bash
+        set -e
+        echo "Preparing deployment manifests..."
+        
+        MANIFESTS_PATH="$(params.manifests-path)"
+        IMAGE_NAME="$(params.image-name)"
+        ENVIRONMENT="$(params.environment)"
+        
+        echo "Environment: ${ENVIRONMENT}"
+        echo "Image: ${IMAGE_NAME}"
+        echo "Manifests path: ${MANIFESTS_PATH}"
+        
+        # Verify manifests path exists
+        if [ ! -d "${MANIFESTS_PATH}" ]; then
+          echo "❌ Manifests path ${MANIFESTS_PATH} not found"
+          exit 1
+        fi
+        
+        # Create temporary deployment directory
+        mkdir -p deployment-temp
+        cp -r ${MANIFESTS_PATH}/* deployment-temp/
+        
+        # Update image reference in kustomization
+        cd deployment-temp
+        
+        # If kustomization.yaml exists, update image
+        if [ -f "kustomization.yaml" ]; then
+          echo "Updating image reference in kustomization.yaml..."
+          
+          # Create or update images section
+          if grep -q "images:" kustomization.yaml; then
+            # Update existing images section
+            sed -i "s|newTag:.*|newTag: $(echo ${IMAGE_NAME} | cut -d':' -f2)|g" kustomization.yaml
+          else
+            # Add images section
+            cat >> kustomization.yaml << EOF
+        
+        images:
+        - name: microservice-demo
+          newName: $(echo ${IMAGE_NAME} | cut -d':' -f1)
+          newTag: $(echo ${IMAGE_NAME} | cut -d':' -f2)
+        EOF
+          fi
+        fi
+        
+        echo "✅ Manifests prepared"
+
+    - name: validate-manifests
+      image: registry.redhat.io/ubi8/ubi:latest
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/bin/bash
+        set -e
+        echo "Validating Kubernetes manifests..."
+        
+        cd deployment-temp
+        
+        # Generate final manifests
+        oc kustomize . > final-manifests.yaml
+        
+        # Validate manifests
+        oc apply --dry-run=client -f final-manifests.yaml || {
+          echo "❌ Manifest validation failed"
+          exit 1
+        }
+        
+        echo "✅ Manifests validated successfully"
+
+    - name: deploy-application
+      image: registry.redhat.io/ubi8/ubi:latest
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/bin/bash
+        set -e
+        echo "Deploying application to $(params.environment) environment..."
+        
+        NAMESPACE="$(params.namespace)"
+        ENVIRONMENT="$(params.environment)"
+        
+        # Switch to target namespace
+        oc project ${NAMESPACE}
+        
+        cd deployment-temp
+        
+        # Apply manifests
+        echo "Applying manifests..."
+        oc apply -k . --wait=true
+        
+        # Label resources for easy identification
+        oc label --overwrite deployment/microservice-demo \
+          environment=${ENVIRONMENT} \
+          pipeline-run=$(context.pipelineRun.name) \
+          deployed-by=tekton
+        
+        echo "✅ Application deployed successfully"
+
+    - name: wait-for-rollout
+      image: registry.redhat.io/ubi8/ubi:latest
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/bin/bash
+        set -e
+        echo "Waiting for deployment rollout..."
+        
+        NAMESPACE="$(params.namespace)"
+        
+        # Switch to target namespace
+        oc project ${NAMESPACE}
+        
+        # Wait for deployment to complete (timeout 10 minutes)
+        oc rollout status deployment/microservice-demo --timeout=600s
+        
+        # Verify pods are running
+        echo "Checking pod status..."
+        oc get pods -l app=microservice-demo
+        
+        # Wait for pods to be ready
+        oc wait --for=condition=ready pod -l app=microservice-demo --timeout=300s
+        
+        echo "✅ Deployment rollout completed"
+
+    - name: health-check
+      image: registry.redhat.io/ubi8/ubi:latest
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/bin/bash
+        set -e
+        echo "Performing post-deployment health checks..."
+        
+        NAMESPACE="$(params.namespace)"
+        
+        # Switch to target namespace
+        oc project ${NAMESPACE}
+        
+        # Get service endpoint
+        echo "Getting service information..."
+        oc get service microservice-demo
+        
+        # Get route if exists
+        if oc get route microservice-demo 2>/dev/null; then
+          ROUTE_HOST=$(oc get route microservice-demo -o jsonpath='{.spec.host}')
+          echo "Route available at: https://${ROUTE_HOST}"
+          
+          # Test external endpoint if route exists
+          echo "Testing external health endpoint..."
+          curl -f -k https://${ROUTE_HOST}/healthz --max-time 30 || {
+            echo "⚠️ External health check failed"
+          }
+        fi
+        
+        # Port forward for internal testing
+        echo "Testing internal health endpoint..."
+        oc port-forward service/microservice-demo 8080:8080 &
+        PORT_FORWARD_PID=$!
+        
+        # Wait for port forward to establish
+        sleep 5
+        
+        # Test health endpoints
+        curl -f http://localhost:8080/healthz --max-time 10 || {
+          echo "❌ Health check failed"
+          kill $PORT_FORWARD_PID 2>/dev/null || true
+          exit 1
+        }
+        
+        curl -f http://localhost:8080/ready --max-time 10 || {
+          echo "❌ Readiness check failed"
+          kill $PORT_FORWARD_PID 2>/dev/null || true
+          exit 1
+        }
+        
+        # Clean up port forward
+        kill $PORT_FORWARD_PID 2>/dev/null || true
+        
+        echo "✅ Health checks passed"
+
+    - name: generate-deployment-report
+      image: registry.redhat.io/ubi8/ubi:latest
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/bin/bash
+        set -e
+        echo "Generating deployment report..."
+        
+        NAMESPACE="$(params.namespace)"
+        ENVIRONMENT="$(params.environment)"
+        IMAGE_NAME="$(params.image-name)"
+        
+        # Switch to target namespace
+        oc project ${NAMESPACE}
+        
+        # Create deployment report
+        cat > deployment-report.md << EOF
+        # 🚀 Deployment Report
+        
+        **Environment:** ${ENVIRONMENT}  
+        **Namespace:** ${NAMESPACE}  
+        **Image:** ${IMAGE_NAME}  
+        **Deployment Date:** $(date)  
+        **Pipeline Run:** $(context.pipelineRun.name)
+        
+        ## 📋 Deployment Status
+        
+        ### Pods
+        \`\`\`
+        $(oc get pods -l app=microservice-demo)
+        \`\`\`
+        
+        ### Services
+        \`\`\`
+        $(oc get services -l app=microservice-demo)
+        \`\`\`
+        
+        ### Routes
+        \`\`\`
+        $(oc get routes -l app=microservice-demo 2>/dev/null || echo "No routes found")
+        \`\`\`
+        
+        ### Deployment Configuration
+        \`\`\`
+        $(oc describe deployment microservice-demo | head -20)
+        \`\`\`
+        
+        ## ✅ Health Check Results
+        
+        - ✅ Liveness probe: Passed
+        - ✅ Readiness probe: Passed
+        - ✅ Deployment rollout: Completed
+        
+        EOF
+        
+        echo "✅ Deployment report generated"
+        cat deployment-report.md 

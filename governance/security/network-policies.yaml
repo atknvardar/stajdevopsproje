@@ -1,0 +1,479 @@
+---
+# Default Deny All Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: microservice-demo-prod
+  labels:
+    app.kubernetes.io/name: security
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector: {}  # Apply to all pods in namespace
+  policyTypes:
+    - Ingress
+    - Egress
+  # No rules defined = deny all traffic
+
+---
+# Allow Microservice to External Dependencies
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: microservice-egress
+  namespace: microservice-demo-prod
+  labels:
+    app.kubernetes.io/name: security
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: microservice-demo
+  policyTypes:
+    - Egress
+  egress:
+    # Allow DNS resolution
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    
+    # Allow HTTPS to external services
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+    
+    # Allow HTTP to specific services only
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: shared-services
+      ports:
+        - protocol: TCP
+          port: 80
+    
+    # Allow communication to observability namespace
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: observability
+      ports:
+        - protocol: TCP
+          port: 9090  # Prometheus
+        - protocol: TCP
+          port: 3100  # Loki
+        - protocol: TCP
+          port: 16686 # Jaeger
+
+---
+# Allow Ingress to Microservice
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: microservice-ingress
+  namespace: microservice-demo-prod
+  labels:
+    app.kubernetes.io/name: security
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: microservice-demo
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow traffic from OpenShift ingress
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: openshift-ingress
+      ports:
+        - protocol: TCP
+          port: 8080
+    
+    # Allow monitoring from observability namespace
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: observability
+        - podSelector:
+            matchLabels:
+              app: prometheus
+      ports:
+        - protocol: TCP
+          port: 8080
+    
+    # Allow health checks from load balancer
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: openshift-ingress
+      ports:
+        - protocol: TCP
+          port: 8080
+    
+    # Allow traffic from same namespace (microservices communication)
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 8080
+
+---
+# Observability Namespace Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: observability-policy
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: security
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow traffic from monitoring dashboards
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: openshift-console
+      ports:
+        - protocol: TCP
+          port: 3000  # Grafana
+        - protocol: TCP
+          port: 9090  # Prometheus
+    
+    # Allow scraping from all application namespaces
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              monitoring: enabled
+      ports:
+        - protocol: TCP
+          port: 9090
+    
+    # Allow internal communication within observability
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 3000
+        - protocol: TCP
+          port: 9090
+        - protocol: TCP
+          port: 3100
+        - protocol: TCP
+          port: 9093
+  
+  egress:
+    # Allow DNS
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    
+    # Allow scraping applications
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              monitoring: enabled
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 9100  # Node exporter
+
+---
+# Development Environment Network Policy (More Permissive)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dev-policy
+  namespace: microservice-demo-dev
+  labels:
+    app.kubernetes.io/name: security
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow all traffic within development namespace
+    - from:
+        - podSelector: {}
+    
+    # Allow traffic from ingress
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: openshift-ingress
+    
+    # Allow monitoring
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: observability
+  
+  egress:
+    # Allow all outbound traffic for development
+    - to: []
+
+---
+# CI/CD Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cicd-policy
+  namespace: ci-cd
+  labels:
+    app.kubernetes.io/name: security
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow webhook traffic from GitHub/GitLab
+    - from: []  # External traffic allowed
+      ports:
+        - protocol: TCP
+          port: 8080
+    
+    # Allow monitoring
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: observability
+      ports:
+        - protocol: TCP
+          port: 8080
+  
+  egress:
+    # Allow all outbound for builds and deployments
+    - to: []
+    
+    # Specifically allow Git operations
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 22   # SSH
+        - protocol: TCP
+          port: 443  # HTTPS
+        - protocol: TCP
+          port: 9418 # Git protocol
+
+---
+# Security Tools Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: security-tools-policy
+  namespace: security-tools
+  labels:
+    app.kubernetes.io/name: security
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow access from DevOps and Security teams only
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: ci-cd
+      ports:
+        - protocol: TCP
+          port: 8080
+    
+    # Allow monitoring
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: observability
+  
+  egress:
+    # Allow scanning all namespaces
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 8080
+    
+    # Allow external security updates
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+
+---
+# Database Access Policy (if using databases)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: database-access
+  namespace: microservice-demo-prod
+  labels:
+    app.kubernetes.io/name: security
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: database
+  policyTypes:
+    - Ingress
+  ingress:
+    # Only allow application pods to access database
+    - from:
+        - podSelector:
+            matchLabels:
+              app: microservice-demo
+      ports:
+        - protocol: TCP
+          port: 5432  # PostgreSQL
+        - protocol: TCP
+          port: 3306  # MySQL
+        - protocol: TCP
+          port: 27017 # MongoDB
+    
+    # Allow monitoring
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: observability
+        - podSelector:
+            matchLabels:
+              app: prometheus
+      ports:
+        - protocol: TCP
+          port: 9187  # PostgreSQL exporter
+        - protocol: TCP
+          port: 9104  # MySQL exporter
+
+---
+# Cross-Namespace Communication Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cross-namespace-communication
+  namespace: microservice-demo-prod
+  labels:
+    app.kubernetes.io/name: security
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      role: api-gateway
+  policyTypes:
+    - Egress
+  egress:
+    # Allow API gateway to communicate with other services
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: shared-services
+        - podSelector:
+            matchLabels:
+              app: auth-service
+      ports:
+        - protocol: TCP
+          port: 8080
+    
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: microservice-demo-staging
+        - podSelector:
+            matchLabels:
+              app: user-service
+      ports:
+        - protocol: TCP
+          port: 8080
+
+---
+# Emergency Access Policy (Break-glass)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: emergency-access
+  namespace: microservice-demo-prod
+  labels:
+    app.kubernetes.io/name: security
+    app.kubernetes.io/component: network-policy
+    emergency-access: "true"
+spec:
+  podSelector:
+    matchLabels:
+      role: emergency-debug
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow SSH access from specific jump hosts
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: security-tools
+        - podSelector:
+            matchLabels:
+              app: jump-host
+      ports:
+        - protocol: TCP
+          port: 22
+  
+  egress:
+    # Allow all outbound for emergency debugging
+    - to: []
+
+---
+# Load Balancer Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: load-balancer-policy
+  namespace: openshift-ingress
+  labels:
+    app.kubernetes.io/name: security
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: router
+  policyTypes:
+    - Egress
+  egress:
+    # Allow routing to all application namespaces
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: microservice-demo-dev
+      ports:
+        - protocol: TCP
+          port: 8080
+    
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: microservice-demo-staging
+      ports:
+        - protocol: TCP
+          port: 8080
+    
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: microservice-demo-prod
+      ports:
+        - protocol: TCP
+          port: 8080 

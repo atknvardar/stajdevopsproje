@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: microservice-demo-config
+data:
+  # Development-specific configuration
+  log-level: "DEBUG"
+  environment: "development"
+  tracing-enabled: "true"
+  
+  # Development server settings
+  debug-mode: "true"
+  hot-reload: "true"
+  
+  # Development monitoring
+  metrics-interval: "5"
+  debug-endpoints: "true" 

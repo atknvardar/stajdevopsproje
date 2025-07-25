@@ -1,0 +1,243 @@
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: microservice-main-trigger
+  labels:
+    app: microservice-demo
+spec:
+  params:
+    - name: git-url
+      description: Git repository URL
+    - name: git-revision
+      description: Git revision
+    - name: git-repository-name
+      description: Repository name
+    - name: git-commit-author
+      description: Commit author
+    - name: git-commit-message
+      description: Commit message
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1beta1
+      kind: PipelineRun
+      metadata:
+        generateName: microservice-main-
+        labels:
+          app: microservice-demo
+          tekton.dev/pipeline: microservice-pipeline
+          git.repository: $(tt.params.git-repository-name)
+          git.revision: $(tt.params.git-revision)
+          trigger.type: main-branch
+      spec:
+        pipelineRef:
+          name: microservice-pipeline
+        params:
+          - name: git-url
+            value: $(tt.params.git-url)
+          - name: git-revision
+            value: $(tt.params.git-revision)
+          - name: image-name
+            value: ghcr.io/$(context.pipelineRun.namespace)/microservice-demo
+          - name: target-namespace
+            value: $(context.pipelineRun.namespace)
+          - name: registry-url
+            value: ghcr.io
+          - name: sonarqube-url
+            value: ""
+          - name: slack-webhook
+            value: ""
+        workspaces:
+          - name: shared-workspace
+            persistentVolumeClaim:
+              claimName: pipeline-workspace-pvc
+          - name: docker-config
+            secret:
+              secretName: registry-secret
+        serviceAccountName: pipeline-sa
+
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: microservice-pr-trigger
+  labels:
+    app: microservice-demo
+spec:
+  params:
+    - name: git-url
+      description: Git repository URL
+    - name: git-revision
+      description: Git revision
+    - name: git-repository-name
+      description: Repository name
+    - name: git-commit-author
+      description: Commit author
+    - name: git-commit-message
+      description: Commit message
+    - name: pr-number
+      description: Pull request number
+    - name: pr-action
+      description: Pull request action
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1beta1
+      kind: PipelineRun
+      metadata:
+        generateName: microservice-pr-
+        labels:
+          app: microservice-demo
+          tekton.dev/pipeline: microservice-pipeline-pr
+          git.repository: $(tt.params.git-repository-name)
+          git.revision: $(tt.params.git-revision)
+          trigger.type: pull-request
+          pr.number: $(tt.params.pr-number)
+      spec:
+        pipelineRef:
+          name: microservice-pipeline-pr
+        params:
+          - name: git-url
+            value: $(tt.params.git-url)
+          - name: git-revision
+            value: $(tt.params.git-revision)
+          - name: image-name
+            value: ghcr.io/$(context.pipelineRun.namespace)/microservice-demo
+          - name: target-namespace
+            value: $(context.pipelineRun.namespace)
+          - name: registry-url
+            value: ghcr.io
+          - name: sonarqube-url
+            value: ""
+          - name: slack-webhook
+            value: ""
+          - name: pr-number
+            value: $(tt.params.pr-number)
+        workspaces:
+          - name: shared-workspace
+            persistentVolumeClaim:
+              claimName: pipeline-workspace-pvc
+          - name: docker-config
+            secret:
+              secretName: registry-secret
+        serviceAccountName: pipeline-sa
+
+---
+# Simplified PR Pipeline (Build + Test only, no deployment)
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: microservice-pipeline-pr
+  labels:
+    app: microservice-demo
+    version: v1.0.0
+spec:
+  description: |
+    Pull Request pipeline for microservice demo application
+    Stages: git-clone -> unit-test -> build-image -> security-scan
+  params:
+    - name: git-url
+      type: string
+      description: Git repository URL
+    - name: git-revision
+      type: string
+      description: Git revision to checkout
+    - name: image-name
+      type: string
+      description: Container image name
+    - name: registry-url
+      type: string
+      description: Container registry URL
+    - name: sonarqube-url
+      type: string
+      description: SonarQube server URL
+      default: ""
+    - name: slack-webhook
+      type: string
+      description: Slack webhook for notifications
+      default: ""
+    - name: pr-number
+      type: string
+      description: Pull request number
+
+  workspaces:
+    - name: shared-workspace
+      description: Shared workspace for pipeline data
+    - name: docker-config
+      description: Docker registry configuration
+
+  tasks:
+    # Stage 1: Git Clone
+    - name: git-clone
+      taskRef:
+        name: git-clone
+        kind: ClusterTask
+      workspaces:
+        - name: output
+          workspace: shared-workspace
+      params:
+        - name: url
+          value: $(params.git-url)
+        - name: revision
+          value: $(params.git-revision)
+        - name: deleteExisting
+          value: "true"
+
+    # Stage 2: Unit Tests & Quality Gate
+    - name: unit-test
+      taskRef:
+        name: unit-test-task
+      runAfter:
+        - git-clone
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+      params:
+        - name: sonarqube-url
+          value: $(params.sonarqube-url)
+
+    # Stage 3: Build Container Image
+    - name: build-image
+      taskRef:
+        name: buildah
+        kind: ClusterTask
+      runAfter:
+        - unit-test
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+        - name: dockerconfig
+          workspace: docker-config
+      params:
+        - name: IMAGE
+          value: "$(params.image-name):pr-$(params.pr-number)-$(tasks.git-clone.results.commit)"
+        - name: DOCKERFILE
+          value: build/Dockerfile
+        - name: CONTEXT
+          value: .
+        - name: BUILD_EXTRA_ARGS
+          value: "--build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') --build-arg VERSION=pr-$(params.pr-number) --build-arg COMMIT_HASH=$(tasks.git-clone.results.commit)"
+
+    # Stage 4: Security Scan
+    - name: security-scan
+      taskRef:
+        name: security-scan-task
+      runAfter:
+        - build-image
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+      params:
+        - name: image-name
+          value: "$(params.image-name):pr-$(params.pr-number)-$(tasks.git-clone.results.commit)"
+
+  finally:
+    # Notification task that runs regardless of pipeline result
+    - name: notify-result
+      taskRef:
+        name: notification-task
+      params:
+        - name: pipeline-status
+          value: $(tasks.status)
+        - name: slack-webhook
+          value: $(params.slack-webhook)
+        - name: git-commit
+          value: $(tasks.git-clone.results.commit)
+        - name: image-name
+          value: "$(params.image-name):pr-$(params.pr-number)" 

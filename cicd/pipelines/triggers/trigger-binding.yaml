@@ -1,0 +1,50 @@
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerBinding
+metadata:
+  name: github-push-binding
+  labels:
+    app: microservice-demo
+spec:
+  params:
+    - name: git-url
+      value: $(body.repository.clone_url)
+    - name: git-revision
+      value: $(body.head_commit.id)
+    - name: git-repository-name
+      value: $(body.repository.name)
+    - name: git-repository-url
+      value: $(body.repository.url)
+    - name: git-commit-author
+      value: $(body.head_commit.author.name)
+    - name: git-commit-message
+      value: $(body.head_commit.message)
+    - name: github-event-type
+      value: $(header.X-GitHub-Event)
+
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerBinding
+metadata:
+  name: github-pr-binding
+  labels:
+    app: microservice-demo
+spec:
+  params:
+    - name: git-url
+      value: $(body.pull_request.head.repo.clone_url)
+    - name: git-revision
+      value: $(body.pull_request.head.sha)
+    - name: git-repository-name
+      value: $(body.repository.name)
+    - name: git-repository-url
+      value: $(body.repository.url)
+    - name: git-commit-author
+      value: $(body.pull_request.user.login)
+    - name: git-commit-message
+      value: $(body.pull_request.title)
+    - name: github-event-type
+      value: $(header.X-GitHub-Event)
+    - name: pr-number
+      value: $(body.number)
+    - name: pr-action
+      value: $(body.action) 

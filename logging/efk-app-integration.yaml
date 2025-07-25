@@ -1,0 +1,192 @@
+# Example application configuration to integrate with EFK stack
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-logging-config
+  namespace: weather-app
+data:
+  log4j2.xml: |
+    <?xml version="1.0" encoding="UTF-8"?>
+    <Configuration status="INFO">
+      <Appenders>
+        <Console name="Console" target="SYSTEM_OUT">
+          <JsonLayout compact="true" eventEol="true">
+            <KeyValuePair key="service" value="weather-app"/>
+            <KeyValuePair key="environment" value="${env:ENVIRONMENT:-dev}"/>
+          </JsonLayout>
+        </Console>
+      </Appenders>
+      <Loggers>
+        <Root level="INFO">
+          <AppenderRef ref="Console"/>
+        </Root>
+      </Loggers>
+    </Configuration>
+  
+  logback.xml: |
+    <configuration>
+      <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+          <customFields>{"service":"weather-app","environment":"${ENVIRONMENT:-dev}"}</customFields>
+        </encoder>
+      </appender>
+      
+      <root level="INFO">
+        <appender-ref ref="STDOUT" />
+      </root>
+    </configuration>
+  
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush        1
+        Daemon       Off
+        Log_Level    info
+        Parsers_File parsers.conf
+
+    [INPUT]
+        Name              tail
+        Path              /var/log/app/*.log
+        Parser            json
+        Tag               app.*
+        Refresh_Interval  5
+
+    [OUTPUT]
+        Name  forward
+        Match *
+        Host  fluentd.logging.svc.cluster.local
+        Port  24224
+---
+# Example Python application with structured logging
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: python-logging-config
+  namespace: weather-app
+data:
+  logging_config.py: |
+    import logging
+    import json
+    import sys
+    from datetime import datetime
+    
+    class JSONFormatter(logging.Formatter):
+        def format(self, record):
+            log_object = {
+                '@timestamp': datetime.utcnow().isoformat() + 'Z',
+                'level': record.levelname,
+                'logger': record.name,
+                'message': record.getMessage(),
+                'service': 'weather-app',
+                'environment': os.environ.get('ENVIRONMENT', 'dev'),
+                'pod_name': os.environ.get('HOSTNAME', 'unknown'),
+                'namespace': os.environ.get('NAMESPACE', 'unknown')
+            }
+            
+            if hasattr(record, 'extra_fields'):
+                log_object.update(record.extra_fields)
+                
+            if record.exc_info:
+                log_object['exception'] = self.formatException(record.exc_info)
+                
+            return json.dumps(log_object)
+    
+    def setup_logging():
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(JSONFormatter())
+        
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.INFO)
+        root_logger.addHandler(handler)
+        
+        # Disable other loggers' propagation
+        logging.getLogger('urllib3').setLevel(logging.WARNING)
+        logging.getLogger('requests').setLevel(logging.WARNING)
+---
+# Example application deployment with logging annotations
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: weather-app-with-logging
+  namespace: weather-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: weather-app
+      version: with-logging
+  template:
+    metadata:
+      labels:
+        app: weather-app
+        version: with-logging
+      annotations:
+        fluentd.io/parser: json
+        fluentd.io/exclude: "false"
+    spec:
+      containers:
+      - name: weather-app
+        image: weather-app:latest
+        env:
+        - name: LOG_LEVEL
+          value: "INFO"
+        - name: LOG_FORMAT
+          value: "json"
+        - name: ENVIRONMENT
+          value: "production"
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        volumeMounts:
+        - name: logging-config
+          mountPath: /app/config/logging
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      volumes:
+      - name: logging-config
+        configMap:
+          name: python-logging-config
+---
+# Sidecar pattern for applications that write to files
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: weather-app-with-sidecar
+  namespace: weather-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: weather-app
+      version: with-sidecar
+  template:
+    metadata:
+      labels:
+        app: weather-app
+        version: with-sidecar
+    spec:
+      containers:
+      - name: weather-app
+        image: weather-app:latest
+        volumeMounts:
+        - name: app-logs
+          mountPath: /var/log/app
+      - name: fluent-bit
+        image: fluent/fluent-bit:2.2
+        volumeMounts:
+        - name: app-logs
+          mountPath: /var/log/app
+          readOnly: true
+        - name: fluent-bit-config
+          mountPath: /fluent-bit/etc/
+      volumes:
+      - name: app-logs
+        emptyDir: {}
+      - name: fluent-bit-config
+        configMap:
+          name: app-logging-config

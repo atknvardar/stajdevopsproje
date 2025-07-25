@@ -1,0 +1,410 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: notification-task
+  labels:
+    app: microservice-demo
+spec:
+  description: |
+    Send notifications about pipeline execution results
+  params:
+    - name: pipeline-status
+      type: string
+      description: Overall pipeline status
+      default: "Unknown"
+    - name: slack-webhook
+      type: string
+      description: Slack webhook URL for notifications
+      default: ""
+    - name: git-commit
+      type: string
+      description: Git commit hash
+      default: ""
+    - name: image-name
+      type: string
+      description: Container image name
+      default: ""
+  steps:
+    - name: prepare-notification-data
+      image: registry.redhat.io/ubi8/ubi:latest
+      script: |
+        #!/bin/bash
+        set -e
+        echo "📊 Preparing notification data..."
+        
+        PIPELINE_STATUS="$(params.pipeline-status)"
+        GIT_COMMIT="$(params.git-commit)"
+        IMAGE_NAME="$(params.image-name)"
+        
+        echo "Pipeline Status: ${PIPELINE_STATUS}"
+        echo "Git Commit: ${GIT_COMMIT}"
+        echo "Image: ${IMAGE_NAME}"
+        echo "Pipeline: $(context.pipeline.name)"
+        echo "Run: $(context.pipelineRun.name)"
+        echo "Namespace: $(context.pipelineRun.namespace)"
+        
+        # Determine status icon and color
+        case "${PIPELINE_STATUS}" in
+          "Succeeded"|"Success"|"succeeded")
+            STATUS_ICON="✅"
+            STATUS_COLOR="good"
+            STATUS_MESSAGE="Pipeline completed successfully!"
+            ;;
+          "Failed"|"failed"|"Failure")
+            STATUS_ICON="❌"
+            STATUS_COLOR="danger"
+            STATUS_MESSAGE="Pipeline failed!"
+            ;;
+          "Cancelled"|"cancelled")
+            STATUS_ICON="⏹️"
+            STATUS_COLOR="warning"
+            STATUS_MESSAGE="Pipeline was cancelled"
+            ;;
+          *)
+            STATUS_ICON="⚠️"
+            STATUS_COLOR="warning"
+            STATUS_MESSAGE="Pipeline status unknown"
+            ;;
+        esac
+        
+        # Store for next step
+        echo "${STATUS_ICON}" > /tmp/status-icon
+        echo "${STATUS_COLOR}" > /tmp/status-color
+        echo "${STATUS_MESSAGE}" > /tmp/status-message
+        
+        echo "✅ Notification data prepared"
+
+    - name: send-slack-notification
+      image: curlimages/curl:latest
+      script: |
+        #!/bin/sh
+        set -e
+        
+        SLACK_WEBHOOK="$(params.slack-webhook)"
+        
+        if [ -z "${SLACK_WEBHOOK}" ]; then
+          echo "⚠️ Slack webhook not configured, skipping Slack notification"
+          exit 0
+        fi
+        
+        echo "📢 Sending Slack notification..."
+        
+        # Read status data
+        STATUS_ICON=$(cat /tmp/status-icon)
+        STATUS_COLOR=$(cat /tmp/status-color)
+        STATUS_MESSAGE=$(cat /tmp/status-message)
+        
+        PIPELINE_STATUS="$(params.pipeline-status)"
+        GIT_COMMIT="$(params.git-commit)"
+        IMAGE_NAME="$(params.image-name)"
+        
+        # Create Slack message payload
+        cat > slack_payload.json << EOF
+        {
+          "attachments": [
+            {
+              "color": "${STATUS_COLOR}",
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "${STATUS_ICON} Pipeline Notification"
+                  }
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*${STATUS_MESSAGE}*"
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Pipeline:*\n$(context.pipeline.name)"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Status:*\n${PIPELINE_STATUS}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Run ID:*\n$(context.pipelineRun.name)"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Namespace:*\n$(context.pipelineRun.namespace)"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+        EOF
+        
+        # Add commit and image info if available
+        if [ -n "${GIT_COMMIT}" ] || [ -n "${IMAGE_NAME}" ]; then
+          cat > additional_fields.json << EOF
+        ,
+                {
+                  "type": "section",
+                  "fields": [
+        EOF
+          
+          if [ -n "${GIT_COMMIT}" ]; then
+            cat >> additional_fields.json << EOF
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Git Commit:*\n\`${GIT_COMMIT}\`"
+                    }
+        EOF
+          fi
+          
+          if [ -n "${IMAGE_NAME}" ]; then
+            if [ -n "${GIT_COMMIT}" ]; then
+              echo "," >> additional_fields.json
+            fi
+            cat >> additional_fields.json << EOF
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Image:*\n\`${IMAGE_NAME}\`"
+                    }
+        EOF
+          fi
+          
+          cat >> additional_fields.json << EOF
+                  ]
+                }
+        EOF
+          
+          # Insert additional fields into main payload
+          sed -i '/]$/i '"$(cat additional_fields.json | tr -d '\n')" slack_payload.json
+        fi
+        
+        # Add timestamp
+        cat >> slack_payload.json << EOF
+        ,
+                {
+                  "type": "context",
+                  "elements": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "Completed: $(date)"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+        EOF
+        
+        # Fix JSON formatting
+        sed -i 's/},]/}]/' slack_payload.json
+        
+        # Send to Slack
+        curl -X POST -H 'Content-type: application/json' \
+          --data @slack_payload.json \
+          "${SLACK_WEBHOOK}" && {
+          echo "✅ Slack notification sent successfully"
+        } || {
+          echo "❌ Failed to send Slack notification"
+        }
+
+    - name: send-email-notification
+      image: registry.redhat.io/ubi8/ubi:latest
+      script: |
+        #!/bin/bash
+        set -e
+        echo "📧 Preparing email notification..."
+        
+        # This is a placeholder for email notification
+        # In production, integrate with your email service (SMTP, SendGrid, etc.)
+        
+        STATUS_ICON=$(cat /tmp/status-icon)
+        STATUS_MESSAGE=$(cat /tmp/status-message)
+        
+        PIPELINE_STATUS="$(params.pipeline-status)"
+        GIT_COMMIT="$(params.git-commit)"
+        IMAGE_NAME="$(params.image-name)"
+        
+        # Create email content
+        cat > email-notification.txt << EOF
+        Subject: ${STATUS_ICON} Pipeline Notification - $(context.pipeline.name)
+        
+        ${STATUS_MESSAGE}
+        
+        Pipeline Details:
+        - Pipeline: $(context.pipeline.name)
+        - Run ID: $(context.pipelineRun.name)
+        - Status: ${PIPELINE_STATUS}
+        - Namespace: $(context.pipelineRun.namespace)
+        - Timestamp: $(date)
+        
+        EOF
+        
+        if [ -n "${GIT_COMMIT}" ]; then
+          echo "- Git Commit: ${GIT_COMMIT}" >> email-notification.txt
+        fi
+        
+        if [ -n "${IMAGE_NAME}" ]; then
+          echo "- Container Image: ${IMAGE_NAME}" >> email-notification.txt
+        fi
+        
+        cat >> email-notification.txt << EOF
+        
+        View in OpenShift Console:
+        https://console-openshift-console.apps.cluster/k8s/ns/$(context.pipelineRun.namespace)/tekton.dev~v1beta1~PipelineRun/$(context.pipelineRun.name)
+        
+        ---
+        This is an automated notification from the CI/CD pipeline.
+        EOF
+        
+        echo "📧 Email notification prepared:"
+        cat email-notification.txt
+        
+        echo "⚠️ Email sending not implemented (placeholder)"
+        echo "💡 Integrate with your email service in production"
+
+    - name: update-git-status
+      image: registry.redhat.io/ubi8/ubi:latest
+      script: |
+        #!/bin/bash
+        set -e
+        echo "🔄 Updating Git commit status..."
+        
+        GIT_COMMIT="$(params.git-commit)"
+        PIPELINE_STATUS="$(params.pipeline-status)"
+        
+        if [ -z "${GIT_COMMIT}" ]; then
+          echo "⚠️ Git commit hash not provided, skipping status update"
+          exit 0
+        fi
+        
+        # Determine Git status
+        case "${PIPELINE_STATUS}" in
+          "Succeeded"|"Success"|"succeeded")
+            GIT_STATE="success"
+            GIT_DESCRIPTION="Pipeline completed successfully"
+            ;;
+          "Failed"|"failed"|"Failure")
+            GIT_STATE="failure"
+            GIT_DESCRIPTION="Pipeline failed"
+            ;;
+          "Cancelled"|"cancelled")
+            GIT_STATE="error"
+            GIT_DESCRIPTION="Pipeline was cancelled"
+            ;;
+          *)
+            GIT_STATE="pending"
+            GIT_DESCRIPTION="Pipeline status unknown"
+            ;;
+        esac
+        
+        echo "Git Status Update:"
+        echo "  Commit: ${GIT_COMMIT}"
+        echo "  State: ${GIT_STATE}"
+        echo "  Description: ${GIT_DESCRIPTION}"
+        
+        # This is a placeholder for Git status API integration
+        # In production, use GitHub/GitLab API to update commit status
+        
+        cat > git-status.json << EOF
+        {
+          "state": "${GIT_STATE}",
+          "target_url": "https://console-openshift-console.apps.cluster/k8s/ns/$(context.pipelineRun.namespace)/tekton.dev~v1beta1~PipelineRun/$(context.pipelineRun.name)",
+          "description": "${GIT_DESCRIPTION}",
+          "context": "ci/openshift-pipeline"
+        }
+        EOF
+        
+        echo "Git status payload prepared:"
+        cat git-status.json
+        
+        echo "⚠️ Git status update not implemented (placeholder)"
+        echo "💡 Integrate with GitHub/GitLab API in production"
+
+    - name: generate-summary-report
+      image: registry.redhat.io/ubi8/ubi:latest
+      script: |
+        #!/bin/bash
+        set -e
+        echo "📋 Generating pipeline summary report..."
+        
+        STATUS_ICON=$(cat /tmp/status-icon)
+        STATUS_MESSAGE=$(cat /tmp/status-message)
+        
+        PIPELINE_STATUS="$(params.pipeline-status)"
+        GIT_COMMIT="$(params.git-commit)"
+        IMAGE_NAME="$(params.image-name)"
+        
+        # Create comprehensive summary report
+        cat > pipeline-summary.md << EOF
+        # ${STATUS_ICON} Pipeline Execution Summary
+        
+        **Status:** ${PIPELINE_STATUS}  
+        **Message:** ${STATUS_MESSAGE}  
+        **Pipeline:** $(context.pipeline.name)  
+        **Run ID:** $(context.pipelineRun.name)  
+        **Namespace:** $(context.pipelineRun.namespace)  
+        **Execution Date:** $(date)
+        
+        ## 📋 Execution Details
+        
+        | Field | Value |
+        |-------|-------|
+        | Git Commit | \`${GIT_COMMIT:-"N/A"}\` |
+        | Container Image | \`${IMAGE_NAME:-"N/A"}\` |
+        | Pipeline Duration | TBD |
+        | Total Tasks | TBD |
+        
+        ## 🔗 Links
+        
+        - [OpenShift Console](https://console-openshift-console.apps.cluster/k8s/ns/$(context.pipelineRun.namespace)/tekton.dev~v1beta1~PipelineRun/$(context.pipelineRun.name))
+        - [Pipeline Definition](https://console-openshift-console.apps.cluster/k8s/ns/$(context.pipelineRun.namespace)/tekton.dev~v1beta1~Pipeline/$(context.pipeline.name))
+        
+        ## 📝 Next Steps
+        
+        EOF
+        
+        case "${PIPELINE_STATUS}" in
+          "Succeeded"|"Success"|"succeeded")
+            cat >> pipeline-summary.md << EOF
+        ✅ **Success Actions:**
+        - Monitor application health and performance
+        - Verify deployment in target environment
+        - Update documentation if needed
+        - Plan next development iteration
+        EOF
+            ;;
+          "Failed"|"failed"|"Failure")
+            cat >> pipeline-summary.md << EOF
+        ❌ **Failure Actions:**
+        - Review pipeline logs for error details
+        - Check failed task outputs
+        - Fix identified issues
+        - Retrigger pipeline after fixes
+        EOF
+            ;;
+          *)
+            cat >> pipeline-summary.md << EOF
+        ⚠️ **Follow-up Actions:**
+        - Investigate pipeline status
+        - Check for any manual interventions needed
+        - Review logs and task outputs
+        EOF
+            ;;
+        esac
+        
+        cat >> pipeline-summary.md << EOF
+        
+        ---
+        *Generated automatically by CI/CD pipeline notification system*
+        EOF
+        
+        echo "✅ Pipeline summary report generated"
+        cat pipeline-summary.md 

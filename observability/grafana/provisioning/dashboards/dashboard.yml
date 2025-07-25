@@ -1,0 +1,46 @@
+apiVersion: 1
+
+providers:
+  # Microservice dashboards folder
+  - name: 'microservice-demo'
+    orgId: 1
+    folder: 'Microservice Demo'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/microservice
+
+  # Infrastructure dashboards folder
+  - name: 'infrastructure'
+    orgId: 1
+    folder: 'Infrastructure'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/infrastructure
+
+  # Alerts dashboards folder
+  - name: 'alerts'
+    orgId: 1
+    folder: 'Alerts'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/alerts
+
+  # Business metrics dashboards folder
+  - name: 'business'
+    orgId: 1
+    folder: 'Business Metrics'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/business 

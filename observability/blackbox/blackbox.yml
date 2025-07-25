@@ -1,0 +1,163 @@
+modules:
+  # HTTP GET probe with basic success criteria
+  http_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+      valid_status_codes: []  # Defaults to 2xx
+      method: GET
+      headers:
+        Host: microservice-demo
+        Accept-Language: en-US
+      no_follow_redirects: false
+      fail_if_ssl: false
+      fail_if_not_ssl: false
+      fail_if_body_matches_regexp: []
+      fail_if_body_not_matches_regexp: []
+      fail_if_header_matches: []
+      fail_if_header_not_matches: []
+      tls_config:
+        insecure_skip_verify: false
+      preferred_ip_protocol: "ip4" # defaults to "ip6"
+      ip_protocol_fallback: false  # no fallback to "ip6"
+
+  # HTTP POST probe
+  http_post_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      method: POST
+      headers:
+        Content-Type: application/json
+      body: '{"health": "check"}'
+
+  # TCP connect probe
+  tcp_connect:
+    prober: tcp
+    timeout: 5s
+
+  # ICMP ping probe
+  icmp:
+    prober: icmp
+    timeout: 5s
+    icmp:
+      preferred_ip_protocol: "ip4"
+      source_ip_address: "127.0.0.1"
+
+  # DNS query probe
+  dns:
+    prober: dns
+    timeout: 5s
+    dns:
+      query_name: "microservice-demo"
+      query_type: "A"
+      valid_rcodes:
+        - NOERROR
+      validate_answer_rrs:
+        fail_if_matches_regexp: []
+        fail_if_all_match_regexp: []
+        fail_if_not_matches_regexp: []
+        fail_if_none_matches_regexp: []
+
+  # HTTPS probe with certificate validation
+  http_2xx_tls:
+    prober: http
+    timeout: 10s
+    http:
+      method: GET
+      no_follow_redirects: false
+      fail_if_ssl: false
+      fail_if_not_ssl: true
+      tls_config:
+        insecure_skip_verify: false
+      preferred_ip_protocol: "ip4"
+
+  # HTTP probe expecting specific response
+  http_json_response:
+    prober: http
+    timeout: 5s
+    http:
+      method: GET
+      headers:
+        Accept: application/json
+      fail_if_body_not_matches_regexp:
+        - '"status":\s*"(ok|healthy)"'
+
+  # Microservice health check probe
+  microservice_health:
+    prober: http
+    timeout: 10s
+    http:
+      method: GET
+      valid_status_codes:
+        - 200
+      headers:
+        User-Agent: "Blackbox-Exporter"
+      fail_if_body_not_matches_regexp:
+        - "healthy|ok|up"
+      preferred_ip_protocol: "ip4"
+
+  # Database connection probe (via HTTP proxy)
+  database_check:
+    prober: http
+    timeout: 15s
+    http:
+      method: GET
+      fail_if_body_not_matches_regexp:
+        - "database.*connected|db.*ok"
+
+  # API endpoint probe with authentication
+  api_authenticated:
+    prober: http
+    timeout: 10s
+    http:
+      method: GET
+      headers:
+        Authorization: "Bearer token-here"
+      valid_status_codes:
+        - 200
+        - 401  # We expect 401 if no valid token
+
+  # SSH connectivity probe
+  ssh:
+    prober: tcp
+    timeout: 5s
+    tcp:
+      query_response:
+        - expect: "SSH-2.0-"
+
+  # SMTP probe
+  smtp:
+    prober: tcp
+    timeout: 5s
+    tcp:
+      query_response:
+        - expect: "220"
+        - send: "EHLO blackbox.local"
+        - expect: "250"
+        - send: "QUIT"
+
+  # FTP probe
+  ftp:
+    prober: tcp
+    timeout: 5s
+    tcp:
+      query_response:
+        - expect: "220"
+
+  # IMAP probe
+  imap:
+    prober: tcp
+    timeout: 5s
+    tcp:
+      query_response:
+        - expect: "OK"
+
+  # POP3 probe
+  pop3:
+    prober: tcp
+    timeout: 5s
+    tcp:
+      query_response:
+        - expect: "+OK" 

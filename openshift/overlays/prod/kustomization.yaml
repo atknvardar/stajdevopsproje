@@ -1,0 +1,45 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: microservice-demo-prod
+  annotations:
+    config.kubernetes.io/local-config: "true"
+
+resources:
+  - ../../base
+  - hpa.yaml
+  - pdb.yaml
+
+namePrefix: ""
+nameSuffix: "-prod"
+
+commonLabels:
+  environment: prod
+  tier: production
+
+commonAnnotations:
+  environment: production
+  deployment.strategy: "rolling"
+  monitoring.coreos.com/enable: "true"
+
+replicas:
+  - name: microservice-demo
+    count: 3
+
+patchesStrategicMerge:
+  - deployment-patch.yaml
+  - configmap-patch.yaml
+  - route-patch.yaml
+
+configMapGenerator:
+  - name: microservice-demo-config
+    behavior: merge
+    literals:
+      - log-level=WARN
+      - environment=production
+      - tracing-enabled=false
+
+images:
+  - name: ghcr.io/user/microservice-demo
+    newTag: latest 

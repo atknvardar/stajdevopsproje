@@ -1,0 +1,19 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: microservice-demo
+  annotations:
+    haproxy.router.openshift.io/timeout: "60s"
+    haproxy.router.openshift.io/balance: "roundrobin"
+    haproxy.router.openshift.io/disable_cookies: "true"
+    haproxy.router.openshift.io/hsts_header: "max-age=31536000;includeSubDomains;preload"
+spec:
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+    certificate: |
+      # Production TLS certificate would be inserted here
+    key: |
+      # Production TLS private key would be inserted here
+    caCertificate: |
+      # CA certificate would be inserted here 

@@ -1,0 +1,48 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: microservice-demo-role
+  labels:
+    app: microservice-demo
+    component: security
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: microservice-demo-rolebinding
+  labels:
+    app: microservice-demo
+    component: security
+subjects:
+  - kind: ServiceAccount
+    name: microservice-demo-sa
+    namespace: default
+roleRef:
+  kind: Role
+  name: microservice-demo-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: microservice-demo-secret
+  labels:
+    app: microservice-demo
+    component: security
+type: Opaque
+data:
+  # Secrets would be base64 encoded here
+  database-password: ""
+  api-key: "" 

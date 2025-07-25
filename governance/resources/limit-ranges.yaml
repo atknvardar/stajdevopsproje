@@ -1,0 +1,431 @@
+---
+# Development Environment Limit Range
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: dev-limit-range
+  namespace: microservice-demo-dev
+  labels:
+    environment: development
+    app.kubernetes.io/name: governance
+    app.kubernetes.io/component: limit-range
+spec:
+  limits:
+    # Container-level limits
+    - type: Container
+      default:              # Default limits (if not specified)
+        cpu: "200m"
+        memory: "256Mi"
+        ephemeral-storage: "1Gi"
+      defaultRequest:       # Default requests (if not specified)
+        cpu: "100m"
+        memory: "128Mi"
+        ephemeral-storage: "500Mi"
+      max:                  # Maximum allowed
+        cpu: "1"
+        memory: "2Gi"
+        ephemeral-storage: "5Gi"
+      min:                  # Minimum required
+        cpu: "50m"
+        memory: "64Mi"
+        ephemeral-storage: "100Mi"
+      maxLimitRequestRatio: # Max ratio of limit to request
+        cpu: "4"            # limit can be max 4x the request
+        memory: "4"
+        ephemeral-storage: "2"
+    
+    # Pod-level limits (aggregated across all containers)
+    - type: Pod
+      max:
+        cpu: "2"
+        memory: "4Gi"
+        ephemeral-storage: "10Gi"
+      min:
+        cpu: "50m"
+        memory: "64Mi"
+        ephemeral-storage: "100Mi"
+    
+    # Persistent Volume Claim limits
+    - type: PersistentVolumeClaim
+      max:
+        storage: "50Gi"     # Max storage per PVC
+      min:
+        storage: "1Gi"      # Min storage per PVC
+
+---
+# Staging Environment Limit Range
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: staging-limit-range
+  namespace: microservice-demo-staging
+  labels:
+    environment: staging
+    app.kubernetes.io/name: governance
+    app.kubernetes.io/component: limit-range
+spec:
+  limits:
+    # Container-level limits (Higher than dev)
+    - type: Container
+      default:
+        cpu: "500m"
+        memory: "512Mi"
+        ephemeral-storage: "2Gi"
+      defaultRequest:
+        cpu: "200m"
+        memory: "256Mi"
+        ephemeral-storage: "1Gi"
+      max:
+        cpu: "2"
+        memory: "4Gi"
+        ephemeral-storage: "10Gi"
+      min:
+        cpu: "100m"
+        memory: "128Mi"
+        ephemeral-storage: "200Mi"
+      maxLimitRequestRatio:
+        cpu: "3"            # Tighter ratio for staging
+        memory: "3"
+        ephemeral-storage: "2"
+    
+    # Pod-level limits
+    - type: Pod
+      max:
+        cpu: "4"
+        memory: "8Gi"
+        ephemeral-storage: "20Gi"
+      min:
+        cpu: "100m"
+        memory: "128Mi"
+        ephemeral-storage: "200Mi"
+    
+    # PVC limits
+    - type: PersistentVolumeClaim
+      max:
+        storage: "100Gi"
+      min:
+        storage: "5Gi"
+
+---
+# Production Environment Limit Range
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: prod-limit-range
+  namespace: microservice-demo-prod
+  labels:
+    environment: production
+    app.kubernetes.io/name: governance
+    app.kubernetes.io/component: limit-range
+spec:
+  limits:
+    # Container-level limits (Production grade)
+    - type: Container
+      default:
+        cpu: "1"
+        memory: "1Gi"
+        ephemeral-storage: "4Gi"
+      defaultRequest:
+        cpu: "500m"
+        memory: "512Mi"
+        ephemeral-storage: "2Gi"
+      max:
+        cpu: "4"
+        memory: "8Gi"
+        ephemeral-storage: "20Gi"
+      min:
+        cpu: "200m"         # Higher minimum for production
+        memory: "256Mi"
+        ephemeral-storage: "500Mi"
+      maxLimitRequestRatio:
+        cpu: "2"            # Conservative ratio for production
+        memory: "2"
+        ephemeral-storage: "2"
+    
+    # Pod-level limits
+    - type: Pod
+      max:
+        cpu: "8"
+        memory: "16Gi"
+        ephemeral-storage: "40Gi"
+      min:
+        cpu: "200m"
+        memory: "256Mi"
+        ephemeral-storage: "500Mi"
+    
+    # PVC limits
+    - type: PersistentVolumeClaim
+      max:
+        storage: "500Gi"    # Large storage for production data
+      min:
+        storage: "10Gi"
+
+---
+# CI/CD Environment Limit Range
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: cicd-limit-range
+  namespace: ci-cd
+  labels:
+    environment: ci-cd
+    app.kubernetes.io/name: governance
+    app.kubernetes.io/component: limit-range
+spec:
+  limits:
+    # Container limits for build workloads
+    - type: Container
+      default:
+        cpu: "2"            # Higher CPU for builds
+        memory: "4Gi"       # More memory for compilation
+        ephemeral-storage: "10Gi"  # Space for build artifacts
+      defaultRequest:
+        cpu: "1"
+        memory: "2Gi"
+        ephemeral-storage: "5Gi"
+      max:
+        cpu: "8"            # Allow high CPU for parallel builds
+        memory: "16Gi"      # Large memory for big projects
+        ephemeral-storage: "50Gi"  # Large ephemeral storage
+      min:
+        cpu: "500m"
+        memory: "1Gi"
+        ephemeral-storage: "2Gi"
+      maxLimitRequestRatio:
+        cpu: "4"            # Allow bursting for builds
+        memory: "4"
+        ephemeral-storage: "4"
+    
+    # Pod limits for build jobs
+    - type: Pod
+      max:
+        cpu: "16"           # Very high for parallel builds
+        memory: "32Gi"
+        ephemeral-storage: "100Gi"
+      min:
+        cpu: "500m"
+        memory: "1Gi"
+        ephemeral-storage: "2Gi"
+    
+    # PVC limits for build cache and artifacts
+    - type: PersistentVolumeClaim
+      max:
+        storage: "1Ti"      # Large storage for build cache
+      min:
+        storage: "10Gi"
+
+---
+# Observability Environment Limit Range
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: observability-limit-range
+  namespace: observability
+  labels:
+    environment: observability
+    app.kubernetes.io/name: governance
+    app.kubernetes.io/component: limit-range
+spec:
+  limits:
+    # Container limits for monitoring components
+    - type: Container
+      default:
+        cpu: "1"
+        memory: "2Gi"
+        ephemeral-storage: "5Gi"
+      defaultRequest:
+        cpu: "500m"
+        memory: "1Gi"
+        ephemeral-storage: "2Gi"
+      max:
+        cpu: "4"            # High CPU for data processing
+        memory: "8Gi"       # Large memory for metrics storage
+        ephemeral-storage: "20Gi"
+      min:
+        cpu: "100m"
+        memory: "256Mi"
+        ephemeral-storage: "1Gi"
+      maxLimitRequestRatio:
+        cpu: "3"
+        memory: "3"
+        ephemeral-storage: "3"
+    
+    # Pod limits
+    - type: Pod
+      max:
+        cpu: "8"
+        memory: "16Gi"
+        ephemeral-storage: "40Gi"
+      min:
+        cpu: "100m"
+        memory: "256Mi"
+        ephemeral-storage: "1Gi"
+    
+    # PVC limits for metrics and logs storage
+    - type: PersistentVolumeClaim
+      max:
+        storage: "2Ti"      # Very large storage for metrics/logs
+      min:
+        storage: "20Gi"
+
+---
+# Security Tools Limit Range
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: security-limit-range
+  namespace: security-tools
+  labels:
+    environment: security
+    app.kubernetes.io/name: governance
+    app.kubernetes.io/component: limit-range
+spec:
+  limits:
+    # Container limits for security scanning
+    - type: Container
+      default:
+        cpu: "1"
+        memory: "2Gi"
+        ephemeral-storage: "4Gi"
+      defaultRequest:
+        cpu: "500m"
+        memory: "1Gi"
+        ephemeral-storage: "2Gi"
+      max:
+        cpu: "4"            # High CPU for vulnerability scanning
+        memory: "8Gi"       # Large memory for image analysis
+        ephemeral-storage: "20Gi"
+      min:
+        cpu: "250m"
+        memory: "512Mi"
+        ephemeral-storage: "1Gi"
+      maxLimitRequestRatio:
+        cpu: "3"
+        memory: "3"
+        ephemeral-storage: "2"
+    
+    # Pod limits
+    - type: Pod
+      max:
+        cpu: "8"
+        memory: "16Gi"
+        ephemeral-storage: "40Gi"
+      min:
+        cpu: "250m"
+        memory: "512Mi"
+        ephemeral-storage: "1Gi"
+    
+    # PVC limits for security data
+    - type: PersistentVolumeClaim
+      max:
+        storage: "500Gi"
+      min:
+        storage: "10Gi"
+
+---
+# Shared Services Limit Range
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: shared-services-limit-range
+  namespace: shared-services
+  labels:
+    environment: shared
+    app.kubernetes.io/name: governance
+    app.kubernetes.io/component: limit-range
+spec:
+  limits:
+    # Container limits for shared services
+    - type: Container
+      default:
+        cpu: "500m"
+        memory: "1Gi"
+        ephemeral-storage: "2Gi"
+      defaultRequest:
+        cpu: "250m"
+        memory: "512Mi"
+        ephemeral-storage: "1Gi"
+      max:
+        cpu: "2"
+        memory: "4Gi"
+        ephemeral-storage: "10Gi"
+      min:
+        cpu: "100m"
+        memory: "256Mi"
+        ephemeral-storage: "500Mi"
+      maxLimitRequestRatio:
+        cpu: "3"
+        memory: "3"
+        ephemeral-storage: "2"
+    
+    # Pod limits
+    - type: Pod
+      max:
+        cpu: "4"
+        memory: "8Gi"
+        ephemeral-storage: "20Gi"
+      min:
+        cpu: "100m"
+        memory: "256Mi"
+        ephemeral-storage: "500Mi"
+    
+    # PVC limits
+    - type: PersistentVolumeClaim
+      max:
+        storage: "200Gi"
+      min:
+        storage: "5Gi"
+
+---
+# Network Tools Limit Range
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: network-tools-limit-range
+  namespace: network-tools
+  labels:
+    environment: network
+    app.kubernetes.io/name: governance
+    app.kubernetes.io/component: limit-range
+spec:
+  limits:
+    # Container limits for network tools
+    - type: Container
+      default:
+        cpu: "500m"
+        memory: "512Mi"
+        ephemeral-storage: "1Gi"
+      defaultRequest:
+        cpu: "200m"
+        memory: "256Mi"
+        ephemeral-storage: "500Mi"
+      max:
+        cpu: "2"
+        memory: "2Gi"
+        ephemeral-storage: "5Gi"
+      min:
+        cpu: "100m"
+        memory: "128Mi"
+        ephemeral-storage: "200Mi"
+      maxLimitRequestRatio:
+        cpu: "4"
+        memory: "4"
+        ephemeral-storage: "2"
+    
+    # Pod limits
+    - type: Pod
+      max:
+        cpu: "4"
+        memory: "4Gi"
+        ephemeral-storage: "10Gi"
+      min:
+        cpu: "100m"
+        memory: "128Mi"
+        ephemeral-storage: "200Mi"
+    
+    # PVC limits
+    - type: PersistentVolumeClaim
+      max:
+        storage: "50Gi"
+      min:
+        storage: "1Gi" 

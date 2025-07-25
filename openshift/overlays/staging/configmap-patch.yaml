@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: microservice-demo-config
+data:
+  # Staging-specific configuration
+  log-level: "INFO"
+  environment: "staging"
+  tracing-enabled: "true"
+  
+  # Staging server settings
+  debug-mode: "false"
+  performance-monitoring: "true"
+  
+  # Staging monitoring
+  metrics-interval: "10"
+  health-check-timeout: "5" 

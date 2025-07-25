@@ -1,0 +1,693 @@
+---
+# Trivy Security Scanner Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trivy-scanner
+  namespace: security-tools
+  labels:
+    app: trivy-scanner
+    app.kubernetes.io/name: security
+    app.kubernetes.io/component: scanner
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: trivy-scanner
+  template:
+    metadata:
+      labels:
+        app: trivy-scanner
+    spec:
+      serviceAccountName: security-scanner
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: trivy
+          image: aquasec/trivy:latest
+          command:
+            - trivy
+            - server
+            - --listen
+            - 0.0.0.0:8080
+            - --cache-dir
+            - /tmp/trivy/.cache
+          ports:
+            - containerPort: 8080
+              name: http
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: cache-volume
+              mountPath: /tmp/trivy/.cache
+            - name: tmp-volume
+              mountPath: /tmp
+          resources:
+            requests:
+              memory: 1Gi
+              cpu: 500m
+            limits:
+              memory: 2Gi
+              cpu: 1
+          env:
+            - name: TRIVY_DEBUG
+              value: "false"
+            - name: TRIVY_CACHE_DIR
+              value: /tmp/trivy/.cache
+      volumes:
+        - name: cache-volume
+          persistentVolumeClaim:
+            claimName: trivy-cache-pvc
+        - name: tmp-volume
+          emptyDir: {}
+
+---
+# Trivy Cache PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: trivy-cache-pvc
+  namespace: security-tools
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: gp2
+
+---
+# Trivy Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: trivy-scanner
+  namespace: security-tools
+  labels:
+    app: trivy-scanner
+spec:
+  selector:
+    app: trivy-scanner
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+
+---
+# Falco Security Runtime Scanner
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: falco
+  namespace: security-tools
+  labels:
+    app: falco
+    app.kubernetes.io/name: security
+    app.kubernetes.io/component: runtime-security
+spec:
+  selector:
+    matchLabels:
+      app: falco
+  template:
+    metadata:
+      labels:
+        app: falco
+    spec:
+      serviceAccountName: falco
+      hostNetwork: true
+      hostPID: true
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: falco
+          image: falcosecurity/falco:latest
+          securityContext:
+            privileged: true
+          args:
+            - /usr/bin/falco
+            - --cri=/run/crio/crio.sock
+            - --cri=/var/run/docker.sock
+            - -K=/var/run/secrets/kubernetes.io/serviceaccount/token
+            - -k=https://kubernetes.default.svc
+            - --k8s-node=$(FALCO_K8S_NODE_NAME)
+            - -pk
+          env:
+            - name: FALCO_K8S_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - mountPath: /host/var/run/docker.sock
+              name: docker-socket
+            - mountPath: /host/run/crio/crio.sock
+              name: crio-socket
+            - mountPath: /host/dev
+              name: dev-fs
+            - mountPath: /host/proc
+              name: proc-fs
+              readOnly: true
+            - mountPath: /host/boot
+              name: boot-fs
+              readOnly: true
+            - mountPath: /host/lib/modules
+              name: lib-modules
+            - mountPath: /host/usr
+              name: usr-fs
+              readOnly: true
+            - mountPath: /host/etc
+              name: etc-fs
+              readOnly: true
+            - mountPath: /etc/falco
+              name: falco-config
+          resources:
+            requests:
+              memory: 512Mi
+              cpu: 200m
+            limits:
+              memory: 1Gi
+              cpu: 500m
+      volumes:
+        - name: docker-socket
+          hostPath:
+            path: /var/run/docker.sock
+        - name: crio-socket
+          hostPath:
+            path: /run/crio/crio.sock
+        - name: dev-fs
+          hostPath:
+            path: /dev
+        - name: proc-fs
+          hostPath:
+            path: /proc
+        - name: boot-fs
+          hostPath:
+            path: /boot
+        - name: lib-modules
+          hostPath:
+            path: /lib/modules
+        - name: usr-fs
+          hostPath:
+            path: /usr
+        - name: etc-fs
+          hostPath:
+            path: /etc
+        - name: falco-config
+          configMap:
+            name: falco-config
+
+---
+# Falco Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: falco-config
+  namespace: security-tools
+data:
+  falco.yaml: |
+    rules_file:
+      - /etc/falco/falco_rules.yaml
+      - /etc/falco/falco_rules.local.yaml
+      - /etc/falco/k8s_audit_rules.yaml
+      - /etc/falco/rules.d
+
+    time_format_iso_8601: false
+    json_output: true
+    json_include_output_property: true
+    log_stderr: true
+    log_syslog: true
+    log_level: info
+
+    priority: debug
+    buffered_outputs: false
+    syscall_event_drops:
+      actions:
+        - log
+        - alert
+      rate: 0.03333
+      max_burst: 1000
+
+    outputs:
+      rate: 1
+      max_burst: 1000
+
+    syslog_output:
+      enabled: true
+
+    stdout_output:
+      enabled: true
+
+    http_output:
+      enabled: true
+      url: http://falco-exporter:9376/webhook
+
+    program_output:
+      enabled: false
+
+    grpc:
+      enabled: false
+
+    grpc_output:
+      enabled: false
+
+---
+# OPA Gatekeeper Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gatekeeper-controller
+  namespace: gatekeeper-system
+  labels:
+    app: gatekeeper
+    control-plane: controller-manager
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: gatekeeper
+      control-plane: controller-manager
+  template:
+    metadata:
+      labels:
+        app: gatekeeper
+        control-plane: controller-manager
+    spec:
+      serviceAccountName: gatekeeper-admin
+      containers:
+        - name: manager
+          image: openpolicyagent/gatekeeper:release-3.14
+          args:
+            - --port=8443
+            - --logtostderr
+            - --exempt-namespace=gatekeeper-system
+            - --operation=webhook
+            - --operation=mutation-webhook
+            - --disable-cert-rotation
+          ports:
+            - containerPort: 8443
+              name: webhook-server
+              protocol: TCP
+            - containerPort: 8888
+              name: metrics
+              protocol: TCP
+            - containerPort: 9090
+              name: healthz
+              protocol: TCP
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - mountPath: /certs
+              name: cert
+              readOnly: true
+            - mountPath: /tmp
+              name: tmp-volume
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9090
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 9090
+      volumes:
+        - name: cert
+          secret:
+            defaultMode: 420
+            secretName: gatekeeper-webhook-server-cert
+        - name: tmp-volume
+          emptyDir: {}
+
+---
+# Kube-bench Security Benchmark CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: kube-bench
+  namespace: security-tools
+  labels:
+    app: kube-bench
+    app.kubernetes.io/name: security
+    app.kubernetes.io/component: benchmark
+spec:
+  schedule: "0 2 * * 0"  # Weekly on Sunday at 2 AM
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: kube-bench
+        spec:
+          hostNetwork: true
+          hostPID: true
+          serviceAccountName: kube-bench
+          containers:
+            - name: kube-bench
+              image: aquasec/kube-bench:latest
+              command: ["kube-bench"]
+              args: ["--json", "--outputfile", "/tmp/results/kube-bench-results.json"]
+              volumeMounts:
+                - name: var-lib-etcd
+                  mountPath: /var/lib/etcd
+                  readOnly: true
+                - name: var-lib-kubelet
+                  mountPath: /var/lib/kubelet
+                  readOnly: true
+                - name: var-lib-kube-scheduler
+                  mountPath: /var/lib/kube-scheduler
+                  readOnly: true
+                - name: var-lib-kube-controller-manager
+                  mountPath: /var/lib/kube-controller-manager
+                  readOnly: true
+                - name: etc-systemd
+                  mountPath: /etc/systemd
+                  readOnly: true
+                - name: lib-systemd
+                  mountPath: /lib/systemd/
+                  readOnly: true
+                - name: srv-kubernetes
+                  mountPath: /srv/kubernetes/
+                  readOnly: true
+                - name: etc-kubernetes
+                  mountPath: /etc/kubernetes
+                  readOnly: true
+                - name: usr-local-mount
+                  mountPath: /usr/local/mount-from-host/bin
+                  readOnly: true
+                - name: etc-cni-netd
+                  mountPath: /etc/cni/net.d/
+                  readOnly: true
+                - name: opt-cni-bin
+                  mountPath: /opt/cni/bin/
+                  readOnly: true
+                - name: results
+                  mountPath: /tmp/results
+              resources:
+                requests:
+                  cpu: 200m
+                  memory: 256Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+          restartPolicy: OnFailure
+          volumes:
+            - name: var-lib-etcd
+              hostPath:
+                path: "/var/lib/etcd"
+            - name: var-lib-kubelet
+              hostPath:
+                path: "/var/lib/kubelet"
+            - name: var-lib-kube-scheduler
+              hostPath:
+                path: "/var/lib/kube-scheduler"
+            - name: var-lib-kube-controller-manager
+              hostPath:
+                path: "/var/lib/kube-controller-manager"
+            - name: etc-systemd
+              hostPath:
+                path: "/etc/systemd"
+            - name: lib-systemd
+              hostPath:
+                path: "/lib/systemd"
+            - name: srv-kubernetes
+              hostPath:
+                path: "/srv/kubernetes"
+            - name: etc-kubernetes
+              hostPath:
+                path: "/etc/kubernetes"
+            - name: usr-local-mount
+              hostPath:
+                path: "/usr/local/bin"
+            - name: etc-cni-netd
+              hostPath:
+                path: "/etc/cni/net.d/"
+            - name: opt-cni-bin
+              hostPath:
+                path: "/opt/cni/bin/"
+            - name: results
+              persistentVolumeClaim:
+                claimName: security-results-pvc
+
+---
+# Security Results PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: security-results-pvc
+  namespace: security-tools
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+# RBAC for Security Tools
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: security-scanner
+  namespace: security-tools
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: falco
+  namespace: security-tools
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kube-bench
+  namespace: security-tools
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: security-scanner
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "nodes", "namespaces"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["security.openshift.io"]
+    resources: ["securitycontextconstraints"]
+    verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: falco
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "pods", "services", "events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kube-bench
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "pods", "services", "configmaps"]
+    verbs: ["get", "list"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
+    verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: security-scanner
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: security-scanner
+subjects:
+  - kind: ServiceAccount
+    name: security-scanner
+    namespace: security-tools
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: falco
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: falco
+subjects:
+  - kind: ServiceAccount
+    name: falco
+    namespace: security-tools
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kube-bench
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kube-bench
+subjects:
+  - kind: ServiceAccount
+    name: kube-bench
+    namespace: security-tools
+
+---
+# Security Compliance Dashboard
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: compliance-dashboard
+  namespace: security-tools
+data:
+  compliance-checks.yaml: |
+    compliance_frameworks:
+      - name: "CIS Kubernetes Benchmark"
+        version: "1.6.1"
+        checks:
+          - id: "1.1.1"
+            description: "Ensure API server is not accessible from 0.0.0.0"
+            severity: "HIGH"
+            automated: true
+          - id: "1.2.1"
+            description: "Ensure anonymous-auth is not set to true"
+            severity: "MEDIUM"
+            automated: true
+          
+      - name: "NIST SP 800-190"
+        version: "1.0"
+        checks:
+          - id: "4.1"
+            description: "Image vulnerability scanning"
+            severity: "HIGH"
+            automated: true
+          - id: "4.2"
+            description: "Image signature verification"
+            severity: "MEDIUM"
+            automated: false
+            
+      - name: "SOC 2 Type II"
+        version: "2017"
+        checks:
+          - id: "CC6.1"
+            description: "Logical and physical access controls"
+            severity: "HIGH"
+            automated: false
+          - id: "CC6.2"
+            description: "Authentication and authorization"
+            severity: "HIGH"
+            automated: true
+
+---
+# Security Metrics Exporter
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: security-metrics-exporter
+  namespace: security-tools
+  labels:
+    app: security-metrics-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: security-metrics-exporter
+  template:
+    metadata:
+      labels:
+        app: security-metrics-exporter
+    spec:
+      serviceAccountName: security-scanner
+      containers:
+        - name: exporter
+          image: prom/node-exporter:latest
+          ports:
+            - containerPort: 9100
+              name: metrics
+          args:
+            - '--path.procfs=/host/proc'
+            - '--path.rootfs=/rootfs'
+            - '--path.sysfs=/host/sys'
+            - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+          volumeMounts:
+            - name: proc
+              mountPath: /host/proc
+              readOnly: true
+            - name: sys
+              mountPath: /host/sys
+              readOnly: true
+            - name: rootfs
+              mountPath: /rootfs
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+      volumes:
+        - name: proc
+          hostPath:
+            path: /proc
+        - name: sys
+          hostPath:
+            path: /sys
+        - name: rootfs
+          hostPath:
+            path: /
+
+---
+# Security Metrics Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: security-metrics
+  namespace: security-tools
+  labels:
+    app: security-metrics-exporter
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9100"
+spec:
+  selector:
+    app: security-metrics-exporter
+  ports:
+    - port: 9100
+      targetPort: 9100
+      name: metrics 

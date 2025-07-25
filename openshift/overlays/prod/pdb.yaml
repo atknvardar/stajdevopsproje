@@ -1,0 +1,12 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: microservice-demo-pdb
+  labels:
+    app: microservice-demo
+    component: availability
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: microservice-demo 

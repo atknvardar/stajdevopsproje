@@ -1,0 +1,268 @@
+---
+# Development Environment Resource Quota
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: dev-resource-quota
+  namespace: microservice-demo-dev
+  labels:
+    environment: development
+    app.kubernetes.io/name: governance
+    app.kubernetes.io/component: resource-quota
+spec:
+  hard:
+    # Compute Resources
+    requests.cpu: "4"           # 4 CPU cores total
+    requests.memory: 8Gi        # 8GB RAM total
+    limits.cpu: "8"             # 8 CPU cores max
+    limits.memory: 16Gi         # 16GB RAM max
+    
+    # Storage Resources
+    persistentvolumeclaims: "10"     # Max 10 PVCs
+    requests.storage: 100Gi          # Total storage requests
+    
+    # Object Count Quotas
+    count/pods: "20"                 # Max 20 pods
+    count/services: "10"             # Max 10 services
+    count/deployments.apps: "10"     # Max 10 deployments
+    count/configmaps: "20"           # Max 20 configmaps
+    count/secrets: "15"              # Max 15 secrets
+    count/routes.route.openshift.io: "5"  # Max 5 routes
+    
+    # Quality of Service Classes
+    count/pods.guaranteed: "5"       # Max 5 guaranteed pods
+    count/pods.burstable: "15"       # Max 15 burstable pods
+    
+    # Extended Resources (if using GPU/custom resources)
+    requests.nvidia.com/gpu: "0"     # No GPU for dev
+
+---
+# Staging Environment Resource Quota
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: staging-resource-quota
+  namespace: microservice-demo-staging
+  labels:
+    environment: staging
+    app.kubernetes.io/name: governance
+    app.kubernetes.io/component: resource-quota
+spec:
+  hard:
+    # Compute Resources (More than dev, less than prod)
+    requests.cpu: "8"           # 8 CPU cores total
+    requests.memory: 16Gi       # 16GB RAM total
+    limits.cpu: "16"            # 16 CPU cores max
+    limits.memory: 32Gi         # 32GB RAM max
+    
+    # Storage Resources
+    persistentvolumeclaims: "15"     # Max 15 PVCs
+    requests.storage: 200Gi          # Total storage requests
+    
+    # Object Count Quotas
+    count/pods: "30"                 # Max 30 pods
+    count/services: "15"             # Max 15 services
+    count/deployments.apps: "15"     # Max 15 deployments
+    count/configmaps: "30"           # Max 30 configmaps
+    count/secrets: "25"              # Max 25 secrets
+    count/routes.route.openshift.io: "10"  # Max 10 routes
+    
+    # Quality of Service Classes
+    count/pods.guaranteed: "10"      # Max 10 guaranteed pods
+    count/pods.burstable: "20"       # Max 20 burstable pods
+    
+    # Extended Resources
+    requests.nvidia.com/gpu: "1"     # 1 GPU for testing
+
+---
+# Production Environment Resource Quota
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: prod-resource-quota
+  namespace: microservice-demo-prod
+  labels:
+    environment: production
+    app.kubernetes.io/name: governance
+    app.kubernetes.io/component: resource-quota
+spec:
+  hard:
+    # Compute Resources (Highest allocation)
+    requests.cpu: "20"          # 20 CPU cores total
+    requests.memory: 40Gi       # 40GB RAM total
+    limits.cpu: "40"            # 40 CPU cores max
+    limits.memory: 80Gi         # 80GB RAM max
+    
+    # Storage Resources
+    persistentvolumeclaims: "25"     # Max 25 PVCs
+    requests.storage: 500Gi          # Total storage requests
+    
+    # Object Count Quotas
+    count/pods: "50"                 # Max 50 pods
+    count/services: "25"             # Max 25 services
+    count/deployments.apps: "20"     # Max 20 deployments
+    count/configmaps: "40"           # Max 40 configmaps
+    count/secrets: "35"              # Max 35 secrets
+    count/routes.route.openshift.io: "15"  # Max 15 routes
+    
+    # Quality of Service Classes
+    count/pods.guaranteed: "25"      # Max 25 guaranteed pods
+    count/pods.burstable: "25"       # Max 25 burstable pods
+    
+    # Extended Resources
+    requests.nvidia.com/gpu: "4"     # 4 GPUs for production workloads
+
+---
+# CI/CD Namespace Resource Quota
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: cicd-resource-quota
+  namespace: ci-cd
+  labels:
+    environment: ci-cd
+    app.kubernetes.io/name: governance
+    app.kubernetes.io/component: resource-quota
+spec:
+  hard:
+    # Compute Resources for build processes
+    requests.cpu: "16"          # 16 CPU cores for builds
+    requests.memory: 32Gi       # 32GB RAM for builds
+    limits.cpu: "32"            # 32 CPU cores max
+    limits.memory: 64Gi         # 64GB RAM max
+    
+    # Storage for build artifacts
+    persistentvolumeclaims: "20"     # Max 20 PVCs
+    requests.storage: 1Ti            # 1TB storage for artifacts
+    
+    # Object counts for CI/CD workloads
+    count/pods: "100"                # Max 100 build pods
+    count/services: "20"             # Max 20 services
+    count/deployments.apps: "30"     # Max 30 deployments
+    count/configmaps: "50"           # Max 50 configmaps
+    count/secrets: "30"              # Max 30 secrets
+    
+    # Job-specific quotas
+    count/jobs.batch: "50"           # Max 50 concurrent jobs
+    count/cronjobs.batch: "10"       # Max 10 cronjobs
+
+---
+# Observability Namespace Resource Quota
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: observability-resource-quota
+  namespace: observability
+  labels:
+    environment: observability
+    app.kubernetes.io/name: governance
+    app.kubernetes.io/component: resource-quota
+spec:
+  hard:
+    # Compute Resources for monitoring stack
+    requests.cpu: "12"          # 12 CPU cores for monitoring
+    requests.memory: 24Gi       # 24GB RAM for monitoring
+    limits.cpu: "24"            # 24 CPU cores max
+    limits.memory: 48Gi         # 48GB RAM max
+    
+    # Storage for metrics and logs
+    persistentvolumeclaims: "15"     # Max 15 PVCs
+    requests.storage: 2Ti            # 2TB storage for metrics/logs
+    
+    # Object counts
+    count/pods: "40"                 # Max 40 monitoring pods
+    count/services: "25"             # Max 25 services
+    count/deployments.apps: "20"     # Max 20 deployments
+    count/configmaps: "30"           # Max 30 configmaps
+    count/secrets: "20"              # Max 20 secrets
+
+---
+# Security Tools Namespace Resource Quota
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: security-resource-quota
+  namespace: security-tools
+  labels:
+    environment: security
+    app.kubernetes.io/name: governance
+    app.kubernetes.io/component: resource-quota
+spec:
+  hard:
+    # Compute Resources for security scanning
+    requests.cpu: "8"           # 8 CPU cores for security tools
+    requests.memory: 16Gi       # 16GB RAM for security tools
+    limits.cpu: "16"            # 16 CPU cores max
+    limits.memory: 32Gi         # 32GB RAM max
+    
+    # Storage for security data
+    persistentvolumeclaims: "10"     # Max 10 PVCs
+    requests.storage: 500Gi          # 500GB storage for security data
+    
+    # Object counts
+    count/pods: "25"                 # Max 25 security pods
+    count/services: "15"             # Max 15 services
+    count/deployments.apps: "15"     # Max 15 deployments
+    count/configmaps: "20"           # Max 20 configmaps
+    count/secrets: "15"              # Max 15 secrets
+    
+    # Job-specific quotas for scanning jobs
+    count/jobs.batch: "30"           # Max 30 scanning jobs
+    count/cronjobs.batch: "5"        # Max 5 scheduled scans
+
+---
+# Shared Services Resource Quota
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: shared-services-quota
+  namespace: shared-services
+  labels:
+    environment: shared
+    app.kubernetes.io/name: governance
+    app.kubernetes.io/component: resource-quota
+spec:
+  hard:
+    # Compute Resources for shared services
+    requests.cpu: "6"           # 6 CPU cores for shared services
+    requests.memory: 12Gi       # 12GB RAM for shared services
+    limits.cpu: "12"            # 12 CPU cores max
+    limits.memory: 24Gi         # 24GB RAM max
+    
+    # Storage for shared data
+    persistentvolumeclaims: "8"      # Max 8 PVCs
+    requests.storage: 200Gi          # 200GB storage
+    
+    # Object counts
+    count/pods: "20"                 # Max 20 shared service pods
+    count/services: "10"             # Max 10 services
+    count/deployments.apps: "10"     # Max 10 deployments
+    count/configmaps: "15"           # Max 15 configmaps
+    count/secrets: "10"              # Max 10 secrets
+
+---
+# Network Resource Quota (for network-intensive workloads)
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: network-quota
+  namespace: network-tools
+  labels:
+    environment: network
+    app.kubernetes.io/name: governance
+    app.kubernetes.io/component: resource-quota
+spec:
+  hard:
+    # Network-specific resources
+    count/services.nodeports: "5"       # Max 5 NodePort services
+    count/services.loadbalancers: "3"    # Max 3 LoadBalancer services
+    count/routes.route.openshift.io: "10"  # Max 10 routes
+    
+    # Standard resources
+    requests.cpu: "4"
+    requests.memory: 8Gi
+    limits.cpu: "8"
+    limits.memory: 16Gi
+    
+    count/pods: "15"
+    count/services: "10" 

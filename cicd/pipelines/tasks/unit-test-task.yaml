@@ -1,0 +1,199 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: unit-test-task
+  labels:
+    app: microservice-demo
+spec:
+  description: |
+    Run unit tests, integration tests, and code quality analysis
+  params:
+    - name: sonarqube-url
+      type: string
+      description: SonarQube server URL for code analysis
+      default: ""
+    - name: git-revision
+      type: string
+      description: Git revision/commit hash
+      default: "main"
+  workspaces:
+    - name: source
+      description: Workspace containing the source code
+  steps:
+    - name: install-dependencies
+      image: python:3.11-slim
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/bin/bash
+        set -e
+        echo "Installing dependencies..."
+        cd app
+        pip install -r requirements.txt
+        pip install coverage pytest-html black isort flake8 pylint
+
+    - name: code-formatting-check
+      image: python:3.11-slim
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/bin/bash
+        set -e
+        echo "Checking code formatting..."
+        cd app
+        
+        # Check if code is properly formatted
+        black --check app/ || {
+          echo "❌ Code formatting check failed. Run 'make format' to fix."
+          exit 1
+        }
+        
+        # Check import sorting
+        isort --check-only app/ || {
+          echo "❌ Import sorting check failed. Run 'make format' to fix."
+          exit 1
+        }
+        
+        echo "✅ Code formatting check passed"
+
+    - name: lint-code
+      image: python:3.11-slim
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/bin/bash
+        set -e
+        echo "Running code linting..."
+        cd app
+        
+        # Run flake8
+        flake8 app/ --max-line-length=100 --exclude=__pycache__ || {
+          echo "⚠️ Flake8 found issues, continuing..."
+        }
+        
+        # Run pylint (non-blocking)
+        pylint app/ --fail-under=7.0 || {
+          echo "⚠️ Pylint found issues, continuing..."
+        }
+        
+        echo "✅ Linting completed"
+
+    - name: run-unit-tests
+      image: python:3.11-slim
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/bin/bash
+        set -e
+        echo "Running unit tests..."
+        cd app
+        
+        # Run unit tests with coverage
+        python -m pytest tests/ \
+          --cov=app \
+          --cov-report=xml:coverage.xml \
+          --cov-report=term-missing \
+          --cov-report=html:htmlcov \
+          --cov-fail-under=80 \
+          --junit-xml=test-results.xml \
+          --html=test-report.html \
+          --self-contained-html \
+          -v
+        
+        echo "✅ Unit tests completed successfully"
+        
+        # Print coverage summary
+        echo "📊 Coverage Summary:"
+        coverage report --show-missing
+
+    - name: security-dependency-check
+      image: python:3.11-slim
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/bin/bash
+        set -e
+        echo "Checking for security vulnerabilities in dependencies..."
+        cd app
+        
+        # Install safety for dependency checking
+        pip install safety
+        
+        # Check for known security vulnerabilities
+        safety check --json || {
+          echo "⚠️ Security vulnerabilities found in dependencies"
+          safety check  # Show human-readable output
+          echo "Please update vulnerable dependencies"
+        }
+        
+        echo "✅ Dependency security check completed"
+
+    - name: sonarqube-analysis
+      image: sonarsource/sonar-scanner-cli:latest
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/bin/bash
+        set -e
+        
+        if [ -z "$(params.sonarqube-url)" ]; then
+          echo "⚠️ SonarQube URL not provided, skipping analysis"
+          exit 0
+        fi
+        
+        echo "Running SonarQube analysis..."
+        
+        # Create sonar-project.properties if it doesn't exist
+        cat > sonar-project.properties << EOF
+        sonar.projectKey=microservice-demo
+        sonar.projectName=Microservice Demo
+        sonar.projectVersion=1.0.0
+        sonar.sources=app/
+        sonar.language=py
+        sonar.sourceEncoding=UTF-8
+        sonar.python.coverage.reportPaths=app/coverage.xml
+        sonar.python.xunit.reportPath=app/test-results.xml
+        EOF
+        
+        # Run SonarQube scanner
+        sonar-scanner \
+          -Dsonar.host.url=$(params.sonarqube-url) \
+          -Dsonar.login=${SONARQUBE_TOKEN}
+        
+        echo "✅ SonarQube analysis completed"
+      env:
+        - name: SONARQUBE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: sonarqube-secret
+              key: token
+              optional: true
+
+    - name: generate-test-report
+      image: python:3.11-slim
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/bin/bash
+        set -e
+        echo "Generating test report summary..."
+        cd app
+        
+        # Create test summary
+        cat > test-summary.txt << EOF
+        📋 Test Execution Summary
+        ========================
+        
+        Date: $(date)
+        Commit: ${GIT_COMMIT}
+        
+        ✅ Unit Tests: $(grep -o 'passed' test-results.xml | wc -l) passed
+        ❌ Failed Tests: $(grep -o 'failed' test-results.xml | wc -l) failed
+        ⏭️ Skipped Tests: $(grep -o 'skipped' test-results.xml | wc -l) skipped
+        
+        📊 Code Coverage: $(grep -o 'line-rate="[0-9.]*"' coverage.xml | head -1 | cut -d'"' -f2 | awk '{printf "%.1f%%", $1*100}')
+        
+        Reports available:
+        - Test Report: test-report.html
+        - Coverage Report: htmlcov/index.html
+        - Coverage XML: coverage.xml
+        EOF
+        
+        cat test-summary.txt
+        echo "✅ Test report generated"
+      env:
+        - name: GIT_COMMIT
+          value: "$(params.git-revision)" 

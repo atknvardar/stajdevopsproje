@@ -1,0 +1,433 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vector-logging
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+---
+# Vector ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vector-config
+  namespace: vector-logging
+data:
+  vector.toml: |
+    [api]
+    enabled = true
+    address = "0.0.0.0:8686"
+    
+    # Input: Kubernetes logs
+    [sources.kubernetes_logs]
+    type = "kubernetes_logs"
+    namespace_annotation_fields.pod_namespace = "kubernetes.namespace_name"
+    node_annotation_fields.node_name = "kubernetes.node_name"
+    pod_annotation_fields.pod_name = "kubernetes.pod_name"
+    pod_annotation_fields.pod_labels = "kubernetes.pod_labels"
+    
+    # Filter: Only weather-app namespace
+    [transforms.filter_weather_app]
+    type = "filter"
+    inputs = ["kubernetes_logs"]
+    condition = '.kubernetes.namespace_name == "weather-app"'
+    
+    # Parse JSON logs
+    [transforms.parse_json]
+    type = "json_parser"
+    inputs = ["filter_weather_app"]
+    field = "message"
+    drop_invalid = true
+    
+    # Console output for debugging
+    [sinks.console]
+    type = "console"
+    inputs = ["parse_json"]
+    encoding.codec = "json"
+    
+    # File output
+    [sinks.file]
+    type = "file"
+    inputs = ["parse_json"]
+    path = "/var/log/vector/weather-app-%Y-%m-%d.log"
+    encoding.codec = "json"
+    
+    # Metrics
+    [sinks.prometheus]
+    type = "prometheus_exporter"
+    inputs = []
+    address = "0.0.0.0:9598"
+---
+# ServiceAccount
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vector
+  namespace: vector-logging
+---
+# ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: vector
+rules:
+- apiGroups: [""]
+  resources:
+  - pods
+  - namespaces
+  - nodes
+  verbs: ["get", "list", "watch"]
+---
+# ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: vector
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: vector
+subjects:
+- kind: ServiceAccount
+  name: vector
+  namespace: vector-logging
+---
+# Grant privileged SCC
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: vector-privileged
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:privileged
+subjects:
+- kind: ServiceAccount
+  name: vector
+  namespace: vector-logging
+---
+# Vector DaemonSet
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: vector
+  namespace: vector-logging
+spec:
+  selector:
+    matchLabels:
+      app: vector
+  template:
+    metadata:
+      labels:
+        app: vector
+    spec:
+      serviceAccountName: vector
+      containers:
+      - name: vector
+        image: timberio/vector:0.34-alpine
+        args:
+          - --config
+          - /etc/vector/vector.toml
+        env:
+        - name: VECTOR_SELF_NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: VECTOR_SELF_POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: VECTOR_SELF_POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        ports:
+        - containerPort: 8686
+          name: api
+        - containerPort: 9598
+          name: metrics
+        resources:
+          requests:
+            memory: 64Mi
+            cpu: 50m
+          limits:
+            memory: 128Mi
+            cpu: 100m
+        volumeMounts:
+        - name: config
+          mountPath: /etc/vector
+        - name: var-log
+          mountPath: /var/log
+        - name: var-lib
+          mountPath: /var/lib
+        - name: data-dir
+          mountPath: /vector-data-dir
+        - name: log-output
+          mountPath: /var/log/vector
+      volumes:
+      - name: config
+        configMap:
+          name: vector-config
+      - name: var-log
+        hostPath:
+          path: /var/log
+      - name: var-lib
+        hostPath:
+          path: /var/lib
+      - name: data-dir
+        emptyDir: {}
+      - name: log-output
+        emptyDir: {}
+---
+# Vector Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: vector
+  namespace: vector-logging
+spec:
+  selector:
+    app: vector
+  ports:
+  - name: api
+    port: 8686
+    targetPort: 8686
+  - name: metrics
+    port: 9598
+    targetPort: 9598
+---
+# Simple Web UI for viewing logs
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: log-viewer-ui
+  namespace: vector-logging
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Vector Log Viewer</title>
+        <meta charset="UTF-8">
+        <style>
+            body {
+                font-family: 'Courier New', monospace;
+                background: #1e1e1e;
+                color: #e0e0e0;
+                margin: 0;
+                padding: 20px;
+            }
+            h1 { color: #4CAF50; }
+            .controls {
+                background: #2d2d2d;
+                padding: 15px;
+                border-radius: 5px;
+                margin-bottom: 20px;
+            }
+            button {
+                background: #4CAF50;
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                margin: 5px;
+                border-radius: 3px;
+                cursor: pointer;
+            }
+            button:hover { background: #45a049; }
+            .log-container {
+                background: #2d2d2d;
+                padding: 15px;
+                border-radius: 5px;
+                max-height: 600px;
+                overflow-y: auto;
+            }
+            .log-entry {
+                margin: 5px 0;
+                padding: 8px;
+                border-radius: 3px;
+                font-size: 14px;
+            }
+            .error { background: #5c2e2e; }
+            .warning { background: #5c4e2e; }
+            .info { background: #2e3d5c; }
+            .timestamp { color: #888; }
+            .level { font-weight: bold; }
+            .error .level { color: #ff6b6b; }
+            .warning .level { color: #ffd93d; }
+            .info .level { color: #6bcf7f; }
+        </style>
+    </head>
+    <body>
+        <h1>🚀 Vector Log Viewer - Weather App</h1>
+        <div class="controls">
+            <button onclick="refreshLogs()">🔄 Refresh</button>
+            <button onclick="showErrors()">❌ Errors Only</button>
+            <button onclick="showWarnings()">⚠️ Warnings Only</button>
+            <button onclick="showAll()">📋 Show All</button>
+            <button onclick="clearLogs()">🗑️ Clear</button>
+            <span style="margin-left: 20px;">Auto-refresh: <input type="checkbox" id="autoRefresh" checked></span>
+        </div>
+        <div id="stats" style="margin: 10px 0; color: #888;"></div>
+        <div class="log-container" id="logs"></div>
+        
+        <script>
+            let allLogs = [];
+            let filteredLogs = [];
+            let filterMode = 'all';
+            
+            function parseLogs(text) {
+                const lines = text.split('\n').filter(line => line.trim());
+                return lines.map(line => {
+                    try {
+                        return JSON.parse(line);
+                    } catch (e) {
+                        return { message: line, level: 'info' };
+                    }
+                });
+            }
+            
+            function formatLog(log) {
+                const level = (log.level || 'info').toLowerCase();
+                const timestamp = log.timestamp || new Date().toISOString();
+                const message = log.event || log.message || JSON.stringify(log);
+                const error = log.error || '';
+                
+                return `
+                    <div class="log-entry ${level}">
+                        <span class="timestamp">${timestamp}</span>
+                        <span class="level">[${level.toUpperCase()}]</span>
+                        <span>${message}</span>
+                        ${error ? `<br><span style="color: #ff6b6b;">Error: ${error}</span>` : ''}
+                    </div>
+                `;
+            }
+            
+            function displayLogs() {
+                const logsDiv = document.getElementById('logs');
+                const logsToShow = filterMode === 'all' ? allLogs : filteredLogs;
+                
+                logsDiv.innerHTML = logsToShow.map(log => formatLog(log)).join('');
+                
+                // Update stats
+                const stats = document.getElementById('stats');
+                const errorCount = allLogs.filter(log => (log.level || '').toLowerCase() === 'error').length;
+                const warnCount = allLogs.filter(log => (log.level || '').toLowerCase() === 'warning').length;
+                stats.innerHTML = `Total: ${allLogs.length} | Errors: ${errorCount} | Warnings: ${warnCount}`;
+                
+                // Auto-scroll to bottom
+                logsDiv.scrollTop = logsDiv.scrollHeight;
+            }
+            
+            async function refreshLogs() {
+                try {
+                    // In a real setup, this would fetch from Vector's API or a backend
+                    // For now, we'll simulate with sample data
+                    const sampleLogs = [
+                        { timestamp: new Date().toISOString(), level: 'info', event: 'Weather data fetched successfully' },
+                        { timestamp: new Date().toISOString(), level: 'warning', event: 'API rate limit approaching' },
+                        { timestamp: new Date().toISOString(), level: 'error', event: 'Failed to connect to weather service', error: 'Connection timeout' }
+                    ];
+                    
+                    allLogs = sampleLogs;
+                    displayLogs();
+                } catch (err) {
+                    console.error('Failed to fetch logs:', err);
+                }
+            }
+            
+            function showErrors() {
+                filterMode = 'filtered';
+                filteredLogs = allLogs.filter(log => (log.level || '').toLowerCase() === 'error');
+                displayLogs();
+            }
+            
+            function showWarnings() {
+                filterMode = 'filtered';
+                filteredLogs = allLogs.filter(log => (log.level || '').toLowerCase() === 'warning');
+                displayLogs();
+            }
+            
+            function showAll() {
+                filterMode = 'all';
+                displayLogs();
+            }
+            
+            function clearLogs() {
+                allLogs = [];
+                filteredLogs = [];
+                displayLogs();
+            }
+            
+            // Initial load
+            refreshLogs();
+            
+            // Auto-refresh
+            setInterval(() => {
+                if (document.getElementById('autoRefresh').checked) {
+                    refreshLogs();
+                }
+            }, 5000);
+        </script>
+    </body>
+    </html>
+---
+# Simple HTTP server for log viewer
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: log-viewer
+  namespace: vector-logging
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: log-viewer
+  template:
+    metadata:
+      labels:
+        app: log-viewer
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            memory: 32Mi
+            cpu: 10m
+          limits:
+            memory: 64Mi
+            cpu: 50m
+        volumeMounts:
+        - name: html
+          mountPath: /usr/share/nginx/html
+      volumes:
+      - name: html
+        configMap:
+          name: log-viewer-ui
+---
+# Service for log viewer
+apiVersion: v1
+kind: Service
+metadata:
+  name: log-viewer
+  namespace: vector-logging
+spec:
+  selector:
+    app: log-viewer
+  ports:
+  - port: 80
+    targetPort: 80
+---
+# Route for log viewer
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: log-viewer
+  namespace: vector-logging
+spec:
+  to:
+    kind: Service
+    name: log-viewer
+  port:
+    targetPort: 80
